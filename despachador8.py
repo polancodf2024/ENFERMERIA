@@ -1,247 +1,454 @@
 import streamlit as st
 import pandas as pd
-import datetime
-import os
-from PIL import Image
-import warnings
+import csv
+from pathlib import Path
+from datetime import datetime
 import paramiko
-from io import StringIO, BytesIO
+import time
+import os
+import logging
+from PIL import Image
 
-# Configuración inicial
-LOGO = "escudo_COLOR.jpg"
+# Configuración de logging mejorada
+logging.basicConfig(
+    filename='tesis.log',
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
-# Cargar configuración desde secrets.toml
-try:
-    # Configuración SFTP
-    REMOTE_HOST = st.secrets["remote_host"]
-    REMOTE_USER = st.secrets["remote_user"]
-    REMOTE_PASSWORD = st.secrets["remote_password"]
-    REMOTE_PORT = st.secrets["remote_port"]
-    REMOTE_BASE_DIR = st.secrets["remote_dir"]
-    REMOTE_CSV_FILE = f"{REMOTE_BASE_DIR}/{st.secrets['csv_materias_file']}"
-    REMOTE_ECG_DIR = f"{REMOTE_BASE_DIR}/ecg_pdfs"
-    
-    # Configuración de email
-    SMTP_SERVER = st.secrets["smtp_server"]
-    SMTP_PORT = st.secrets["smtp_port"]
-    EMAIL_USER = st.secrets["email_user"]
-    EMAIL_PASSWORD = st.secrets["email_password"]
-    NOTIFICATION_EMAIL = st.secrets["notification_email"]
-    
-except KeyError as e:
-    st.error(f"Error de configuración: Falta la clave {e} en secrets.toml")
-    st.stop()
-
-# Suprimir advertencias
-warnings.filterwarnings('ignore', category=FutureWarning)
-
-# Conexión SFTP (con manejo de errores mejorado)
-def get_sftp_connection():
-    try:
-        transport = paramiko.Transport((REMOTE_HOST, REMOTE_PORT))
-        transport.connect(username=REMOTE_USER, password=REMOTE_PASSWORD)
-        return paramiko.SFTPClient.from_transport(transport)
-    except Exception as e:
-        st.error(f"Error de conexión SFTP: {str(e)}")
-        return None
-
-# Verificar/crear estructura remota
-def init_remote_structure(sftp):
-    try:
-        # Crear directorio ECG si no existe
-        try:
-            sftp.stat(REMOTE_ECG_DIR)
-        except IOError:
-            sftp.mkdir(REMOTE_ECG_DIR)
+# ====================
+# CONFIGURACIÓN INICIAL
+# ====================
+class Config:
+    def __init__(self):
+        self.SMTP_SERVER = st.secrets.get("smtp_server")
+        self.SMTP_PORT = st.secrets.get("smtp_port")
+        self.EMAIL_USER = st.secrets.get("email_user")
+        self.EMAIL_PASSWORD = st.secrets.get("email_password")
+        self.NOTIFICATION_EMAIL = st.secrets.get("notification_email")
+        self.CSV_FILENAME = "signos.csv"  # Archivo único para todos los registros
+        self.TIMEOUT_SECONDS = 30
+        self.HIGHLIGHT_COLOR = "#90EE90"
+        self.LOGO_PATH = "escudo_COLOR.jpg"
         
-        # Crear archivo CSV si no existe
-        try:
-            sftp.stat(REMOTE_CSV_FILE)
-        except IOError:
-            with sftp.open(REMOTE_CSV_FILE, 'w') as f:
-                f.write("Fecha_Hora,ID_Paciente,Nombre_Completo,Presion_Arterial,Temperatura,Oximetria,ECG\n")
-    except Exception as e:
-        st.error(f"Error al inicializar estructura remota: {str(e)}")
-        raise
+        self.REMOTE = {
+            'HOST': st.secrets.get("remote_host"),
+            'USER': st.secrets.get("remote_user"),
+            'PASSWORD': st.secrets.get("remote_password"),
+            'PORT': st.secrets.get("remote_port"),
+            'DIR': st.secrets.get("remote_dir")
+        }
 
-# Mostrar logo
-def mostrar_logo():
-    try:
-        imagen = Image.open(LOGO)
-        col1, col2, col3 = st.columns([1,3,1])
-        with col2:
-            st.image(imagen, width=150)
-    except FileNotFoundError:
-        st.warning("Logo no encontrado")
-    except Exception as e:
-        st.error(f"Error al cargar el logo: {str(e)}")
+CONFIG = Config()
 
-# Guardar registro en servidor remoto
-def guardar_registro_remoto(datos):
-    sftp = get_sftp_connection()
-    if sftp is None:
-        return False
-    
-    try:
-        init_remote_structure(sftp)
+# ==================
+# CLASE SSH MANAGER (igual que antes)
+# ==================
+class SSHManager:
+    MAX_RETRIES = 3
+    RETRY_DELAY = 5  # segundos
+
+    @staticmethod
+    def get_connection():
+        """Establece conexión SSH segura con reintentos"""
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         
-        # Leer CSV existente
-        try:
-            with sftp.open(REMOTE_CSV_FILE, 'r') as f:
-                df = pd.read_csv(f)
-        except:
-            df = pd.DataFrame(columns=datos.keys())
-        
-        # Añadir nuevo registro
-        nuevo_df = pd.DataFrame([datos])
-        df = pd.concat([df, nuevo_df], ignore_index=True)
-        
-        # Guardar CSV actualizado
-        with sftp.open(REMOTE_CSV_FILE, 'w') as f:
-            df.to_csv(f, index=False)
-        
-        return True
-    except Exception as e:
-        st.error(f"Error al guardar registro: {str(e)}")
-        return False
-    finally:
-        sftp.close()
-
-# Subir archivo PDF al servidor remoto
-def subir_pdf_remoto(file_buffer, filename):
-    sftp = get_sftp_connection()
-    if sftp is None:
-        return False
-    
-    try:
-        remote_path = f"{REMOTE_ECG_DIR}/{filename}"
-        with sftp.open(remote_path, 'wb') as f:
-            f.write(file_buffer.getvalue())
-        return True
-    except Exception as e:
-        st.error(f"Error al subir archivo ECG: {str(e)}")
-        return False
-    finally:
-        sftp.close()
-
-# Interfaz de usuario
-mostrar_logo()
-st.title("📊 Sistema de Registro Médico")
-st.subheader("Ingrese los datos del paciente")
-
-with st.form("registro_form"):
-    # Datos personales
-    id_paciente = st.text_input("Identificación del Paciente", placeholder="Ej: 593991234567")
-    nombre_completo = st.text_input("Nombre Completo", placeholder="Ej: Juan Pérez")
-    
-    # Signos vitales
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        presion_arterial = st.text_input("Presión Arterial", placeholder="Ej: 120/80")
-    with col2:
-        temperatura = st.number_input("Temperatura (°C)", min_value=30.0, max_value=45.0, value=36.5, step=0.1)
-    with col3:
-        oximetria = st.number_input("Oximetría (%)", min_value=70, max_value=100, value=98)
-    
-    # ECG
-    ecg_pdf = st.file_uploader("Subir Electrocardiograma", type=["pdf"])
-    
-    submitted = st.form_submit_button("Guardar Datos")
-    
-    if submitted:
-        if not id_paciente or not nombre_completo:
-            st.error("❌ La identificación y nombre completo son obligatorios")
-        else:
-            ahora = datetime.datetime.now()
-            estado_ecg = "N"
-            
-            # Procesamiento del ECG
-            if ecg_pdf is not None:
-                nombre_archivo = f"{ahora.strftime('%Y%m%d%H%M')}_{id_paciente}_ECG.pdf"
-                if subir_pdf_remoto(ecg_pdf, nombre_archivo):
-                    estado_ecg = "E"
-                else:
-                    estado_ecg = "Error"
-            
-            # Crear registro
-            datos_registro = {
-                "Fecha_Hora": ahora.strftime("%Y-%m-%d %H:%M:%S"),
-                "ID_Paciente": id_paciente,
-                "Nombre_Completo": nombre_completo,
-                "Presion_Arterial": presion_arterial,
-                "Temperatura": temperatura,
-                "Oximetria": oximetria,
-                "ECG": estado_ecg
-            }
-            
-            if guardar_registro_remoto(datos_registro):
-                st.success("✅ Datos guardados exitosamente en el servidor remoto")
-                st.balloons()
-
-# Visualización de datos
-if st.checkbox("Mostrar registros almacenados"):
-    try:
-        sftp = get_sftp_connection()
-        if sftp:
-            with sftp.open(REMOTE_CSV_FILE, 'r') as f:
-                df = pd.read_csv(f)
-            
-            if not df.empty:
-                # Función para resaltar ECG
-                def resaltar_ecg(val):
-                    color = '#90EE90' if val == 'E' else '#FFCCCB'
-                    return f'background-color: {color}'
-                
-                st.dataframe(
-                    df.style.applymap(resaltar_ecg, subset=['ECG']),
-                    height=400
+        for attempt in range(SSHManager.MAX_RETRIES):
+            try:
+                ssh.connect(
+                    hostname=CONFIG.REMOTE['HOST'],
+                    port=CONFIG.REMOTE['PORT'],
+                    username=CONFIG.REMOTE['USER'],
+                    password=CONFIG.REMOTE['PASSWORD'],
+                    timeout=CONFIG.TIMEOUT_SECONDS
                 )
-                
-                # Estadísticas
-                st.subheader("Resumen de Datos")
-                total = len(df)
-                con_ecg = (df['ECG'] == 'E').sum()
-                
-                cols = st.columns(3)
-                cols[0].metric("Total Pacientes", total)
-                cols[1].metric("Con ECG", f"{con_ecg} ({con_ecg/total*100:.1f}%)")
-                cols[2].metric("Sin ECG", f"{total-con_ecg} ({(total-con_ecg)/total*100:.1f}%)")
-                
-                # Gráfico
-                st.bar_chart(df['ECG'].value_counts())
-            else:
-                st.warning("No hay registros almacenados aún")
-            sftp.close()
-    except Exception as e:
-        st.error(f"No se pudieron cargar los datos: {str(e)}")
+                logging.info(f"Conexión SSH establecida (intento {attempt + 1})")
+                return ssh
+            except Exception as e:
+                logging.warning(f"Intento {attempt + 1} fallido: {str(e)}")
+                if attempt < SSHManager.MAX_RETRIES - 1:
+                    time.sleep(SSHManager.RETRY_DELAY)
+                else:
+                    logging.error("Fallo definitivo al conectar via SSH")
+                    st.error(f"Error de conexión SSH después de {SSHManager.MAX_RETRIES} intentos: {str(e)}")
+                    return None
 
-# Información del sistema
-if st.checkbox("Mostrar información del sistema"):
-    st.write("**Configuración actual:**")
-    
-    st.write("📁 **Almacenamiento remoto:**")
-    st.write(f"- Servidor: {REMOTE_HOST}:{REMOTE_PORT}")
-    st.write(f"- Directorio: {REMOTE_BASE_DIR}")
-    
-    st.write("📧 **Notificaciones:**")
-    st.write(f"- Servidor SMTP: {SMTP_SERVER}")
-    st.write(f"- Email de notificación: {NOTIFICATION_EMAIL[:3]}•••@{NOTIFICATION_EMAIL.split('@')[-1]}")
-    
+    @staticmethod
+    def verify_file_integrity(local_path, remote_path, sftp):
+        """Verifica que el archivo se transfirió correctamente"""
+        try:
+            local_size = os.path.getsize(local_path)
+            remote_size = sftp.stat(remote_path).st_size
+            return local_size == remote_size
+        except Exception as e:
+            logging.error(f"Error verificando integridad: {str(e)}")
+            return False
+
+    @staticmethod
+    def download_remote_file(remote_path, local_path):
+        """Descarga un archivo con verificación de integridad"""
+        for attempt in range(SSHManager.MAX_RETRIES):
+            ssh = SSHManager.get_connection()
+            if not ssh:
+                return False
+                
+            try:
+                with ssh.open_sftp() as sftp:
+                    try:
+                        sftp.stat(remote_path)
+                    except FileNotFoundError:
+                        # Crear archivo local con estructura correcta
+                        columns = [
+                            'timestamp', 'id_paciente', 'nombre_paciente', 
+                            'presion_arterial', 'temperatura', 'oximetria', 
+                            'estado'
+                        ]
+                        pd.DataFrame(columns=columns).to_csv(local_path, index=False)
+                        logging.info(f"Archivo remoto no encontrado, creado local con estructura: {local_path}")
+                        return True
+                        
+                    sftp.get(remote_path, local_path)
+                    
+                    if SSHManager.verify_file_integrity(local_path, remote_path, sftp):
+                        logging.info(f"Archivo descargado correctamente: {remote_path} a {local_path}")
+                        return True
+                    else:
+                        logging.warning(f"Error de integridad en descarga, reintentando... (intento {attempt + 1})")
+                        if attempt < SSHManager.MAX_RETRIES - 1:
+                            time.sleep(SSHManager.RETRY_DELAY)
+                        else:
+                            raise Exception("Fallo en verificación de integridad después de múltiples intentos")
+                            
+            except Exception as e:
+                logging.error(f"Error en descarga (intento {attempt + 1}): {str(e)}")
+                if attempt == SSHManager.MAX_RETRIES - 1:
+                    st.error(f"Error descargando archivo remoto después de {SSHManager.MAX_RETRIES} intentos: {str(e)}")
+                    return False
+                    
+            finally:
+                ssh.close()
+
+    @staticmethod
+    def upload_remote_file(local_path, remote_path):
+        """Sube un archivo con verificación de integridad"""
+        if not os.path.exists(local_path):
+            logging.error(f"Archivo local no existe: {local_path}")
+            st.error("El archivo local no existe")
+            return False
+            
+        for attempt in range(SSHManager.MAX_RETRIES):
+            ssh = SSHManager.get_connection()
+            if not ssh:
+                return False
+                
+            try:
+                with ssh.open_sftp() as sftp:
+                    sftp.put(local_path, remote_path)
+                    
+                    if SSHManager.verify_file_integrity(local_path, remote_path, sftp):
+                        logging.info(f"Archivo subido correctamente: {local_path} a {remote_path}")
+                        return True
+                    else:
+                        logging.warning(f"Error de integridad en subida, reintentando... (intento {attempt + 1})")
+                        if attempt < SSHManager.MAX_RETRIES - 1:
+                            time.sleep(SSHManager.RETRY_DELAY)
+                        else:
+                            raise Exception("Fallo en verificación de integridad después de múltiples intentos")
+                            
+            except Exception as e:
+                logging.error(f"Error en subida (intento {attempt + 1}): {str(e)}")
+                if attempt == SSHManager.MAX_RETRIES - 1:
+                    st.error(f"Error subiendo archivo remoto después de {SSHManager.MAX_RETRIES} intentos: {str(e)}")
+                    return False
+                    
+            finally:
+                ssh.close()
+
+# ====================
+# FUNCIONES PRINCIPALES MODIFICADAS
+# ====================
+def sync_with_remote():
+    """Sincroniza el archivo local signos.csv con el remoto"""
     try:
-        sftp = get_sftp_connection()
-        if sftp:
+        st.info("🔄 Sincronizando con el servidor remoto...")
+        remote_path = os.path.join(CONFIG.REMOTE['DIR'], CONFIG.CSV_FILENAME)
+
+        # Intenta descargar el archivo remoto
+        download_success = SSHManager.download_remote_file(remote_path, CONFIG.CSV_FILENAME)
+
+        if not download_success:
+            # Si no existe el archivo remoto, crea uno local con estructura correcta
+            columns = [
+                'timestamp', 'id_paciente', 'nombre_paciente', 
+                'presion_arterial', 'temperatura', 'oximetria', 
+                'estado'
+            ]
+
+            # Verifica si el archivo local ya existe
+            if not Path(CONFIG.CSV_FILENAME).exists():
+                pd.DataFrame(columns=columns).to_csv(CONFIG.CSV_FILENAME, index=False)
+                st.info("ℹ️ No se encontró archivo remoto. Se creó uno nuevo localmente con la estructura correcta.")
+            else:
+                # Si el archivo local existe pero está vacío o corrupto
+                try:
+                    df = pd.read_csv(CONFIG.CSV_FILENAME)
+                    if df.empty:
+                        pd.DataFrame(columns=columns).to_csv(CONFIG.CSV_FILENAME, index=False)
+                except:
+                    pd.DataFrame(columns=columns).to_csv(CONFIG.CSV_FILENAME, index=False)
+
+            return False
+
+        # Verifica que el archivo descargado no esté vacío
+        try:
+            df = pd.read_csv(CONFIG.CSV_FILENAME)
+            if df.empty:
+                st.warning("El archivo remoto está vacío")
+        except pd.errors.EmptyDataError:
+            st.warning("El archivo remoto está vacío o corrupto")
+            columns = [
+                'timestamp', 'id_paciente', 'nombre_paciente', 
+                'presion_arterial', 'temperatura', 'oximetria', 
+                'estado'
+            ]
+            pd.DataFrame(columns=columns).to_csv(CONFIG.CSV_FILENAME, index=False)
+            return False
+
+        st.success("✅ Sincronización con servidor remoto completada")
+        return True
+
+    except Exception as e:
+        st.error(f"❌ Error en sincronización: {str(e)}")
+        logging.error(f"Sync Error: {str(e)}")
+        return False
+
+def save_to_csv(data: dict):
+    """Guarda los datos en el CSV local y remoto, eliminando registros con estado 'X'"""
+    try:
+        with st.spinner("Sincronizando datos con el servidor..."):
+            if not sync_with_remote():
+                st.warning("⚠️ Trabajando con copia local debido a problemas de conexión")
+
+        columns = [
+            'timestamp', 'id_paciente', 'nombre_paciente', 
+            'presion_arterial', 'temperatura', 'oximetria', 
+            'estado'
+        ]
+
+        # Verificar si el archivo existe y tiene contenido válido
+        if not Path(CONFIG.CSV_FILENAME).exists():
+            df_existing = pd.DataFrame(columns=columns)
+        else:
             try:
-                csv_info = sftp.stat(REMOTE_CSV_FILE)
-                st.write(f"\n**Archivo de datos:** {csv_info.st_size} bytes, {len(pd.read_csv(sftp.open(REMOTE_CSV_FILE, 'r')))} registros")
-            except:
-                st.write("\n**Archivo de datos:** No encontrado")
+                df_existing = pd.read_csv(
+                    CONFIG.CSV_FILENAME,
+                    encoding='utf-8-sig',
+                    dtype={'id_paciente': str}
+                )
+                # Eliminar registros con estado 'X'
+                df_existing = df_existing[df_existing['estado'] != 'X'].copy()
+                
+                # Verificar si el DataFrame está vacío
+                if df_existing.empty:
+                    df_existing = pd.DataFrame(columns=columns)
+                # Verificar si tiene todas las columnas necesarias
+                missing_cols = set(columns) - set(df_existing.columns)
+                if missing_cols:
+                    for col in missing_cols:
+                        df_existing[col] = ""
+            except (pd.errors.EmptyDataError, pd.errors.ParserError):
+                df_existing = pd.DataFrame(columns=columns)
+
+        # Preparar el nuevo registro
+        df_new = pd.DataFrame([data])
+
+        # Limpiar los datos del nuevo registro
+        for col in df_new.columns:
+            if df_new[col].dtype == object:
+                df_new[col] = df_new[col].astype(str).str.replace(r'\r\n|\n|\r', ' ', regex=True).str.strip()
+
+        # Combinar los datos existentes (sin los 'X') con los nuevos
+        df_combined = pd.concat([df_existing, df_new], ignore_index=True)
+
+        # Asegurar que todas las columnas estén presentes
+        for col in columns:
+            if col not in df_combined.columns:
+                df_combined[col] = ""
+
+        # Reordenar columnas
+        df_combined = df_combined[columns]
+
+        # Guardar localmente
+        df_combined.to_csv(CONFIG.CSV_FILENAME, index=False, encoding='utf-8-sig')
+
+        # Intentar subir al servidor remoto
+        with st.spinner("Subiendo datos al servidor remoto..."):
+            remote_path = os.path.join(CONFIG.REMOTE['DIR'], CONFIG.CSV_FILENAME)
+            if SSHManager.upload_remote_file(CONFIG.CSV_FILENAME, remote_path):
+                st.success("✅ Registro guardado exitosamente en el servidor remoto!")
+                return True
+            else:
+                st.error("❌ No se pudo subir el archivo al servidor remoto")
+                st.info("ℹ️ Los datos se guardaron localmente y se intentará subir en la próxima sincronización")
+                return False
+
+    except Exception as e:
+        st.error(f"❌ Error al guardar en CSV: {str(e)}")
+        logging.error(f"Save CSV Error: {str(e)}")
+        return False
+
+def main():
+    st.set_page_config(
+        page_title="Registro de Signos Vitales",
+        page_icon="❤️",
+        layout="centered"
+    )
+
+    # Mostrar logo si existe
+    if Path(CONFIG.LOGO_PATH).exists():
+        logo = Image.open(CONFIG.LOGO_PATH)
+        st.image(logo, width=200)
+
+    st.title("❤️ Registro de Signos Vitales")
+
+    # Sincronización inicial
+    with st.spinner("Conectando con el servidor remoto..."):
+        sync_with_remote()
+
+    # Cargar o inicializar el DataFrame
+    if Path(CONFIG.CSV_FILENAME).exists():
+        try:
+            pacientes_df = pd.read_csv(CONFIG.CSV_FILENAME, encoding='utf-8-sig', dtype={'id_paciente': str})
+            pacientes_df['id_paciente'] = pacientes_df['id_paciente'].astype(str).str.strip()
+
+            # Asegurar que el campo 'estado' exista
+            if 'estado' not in pacientes_df.columns:
+                pacientes_df['estado'] = 'A'
+            else:
+                # Limpiar valores vacíos/nulos en el campo estado
+                pacientes_df['estado'] = pacientes_df['estado'].fillna('A').str.strip().replace('', 'A')
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {str(e)}")
+            pacientes_df = pd.DataFrame(columns=[
+                'timestamp', 'id_paciente', 'nombre_paciente', 
+                'presion_arterial', 'temperatura', 'oximetria', 
+                'estado'
+            ])
+    else:
+        pacientes_df = pd.DataFrame(columns=[
+            'timestamp', 'id_paciente', 'nombre_paciente', 
+            'presion_arterial', 'temperatura', 'oximetria', 
+            'estado'
+        ])
+
+    # Mostrar registros existentes si los hay
+    if not pacientes_df.empty:
+        st.subheader("📋 Registros médicos existentes")
+        st.info("""
+        **Instrucciones:**
+        - Marque con 'X' los registros que desee dar de baja
+        - Todos los demás deben mantenerse con 'A' (Activo)
+        """)
+
+        # Crear copia editable solo con las columnas necesarias
+        columnas_mostrar = ['timestamp', 'id_paciente', 'nombre_paciente', 
+                           'presion_arterial', 'temperatura', 'oximetria', 'estado']
+        edited_df = pacientes_df[columnas_mostrar].copy()
+
+        # Mostrar editor de tabla
+        edited_df = st.data_editor(
+            edited_df,
+            column_config={
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado",
+                    options=["A", "X"],
+                    required=True,
+                    width="small"
+                )
+            },
+            hide_index=True,
+            use_container_width=True,
+            key="editor_tabla"
+        )
+
+        # Verificar cambios en los estados
+        if not edited_df.equals(pacientes_df[columnas_mostrar]):
+            # Actualizar el estado en el DataFrame original
+            pacientes_df['estado'] = edited_df['estado']
+
+            # Identificar registros marcados para borrar
+            registros_a_borrar = pacientes_df[pacientes_df['estado'] == 'X']
+
+            if not registros_a_borrar.empty:
+                st.warning(f"⚠️ Tiene {len(registros_a_borrar)} registro(s) marcado(s) para dar de baja")
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🗑️ Confirmar baja de registros", type="primary"):
+                        # Filtrar solo los registros activos (estado 'A')
+                        pacientes_df = pacientes_df[pacientes_df['estado'] == 'A'].copy()
+
+                        # Guardar cambios en el archivo
+                        pacientes_df.to_csv(CONFIG.CSV_FILENAME, index=False, encoding='utf-8-sig')
+
+                        # Sincronizar con servidor remoto
+                        with st.spinner("Guardando cambios..."):
+                            remote_path = os.path.join(CONFIG.REMOTE['DIR'], CONFIG.CSV_FILENAME)
+                            upload_success = SSHManager.upload_remote_file(CONFIG.CSV_FILENAME, remote_path)
+
+                        if upload_success:
+                            st.success("✅ Registros eliminados exitosamente del archivo!")
+                            st.balloons()
+                            time.sleep(2)
+                            st.rerun()
+                        else:
+                            st.error("❌ Error al sincronizar con el servidor remoto")
+
+                with col2:
+                    if st.button("↩️ Cancelar operación"):
+                        st.info("Operación cancelada - No se realizaron cambios")
+                        st.rerun()
+
+    # Preguntar si desea añadir nuevo registro
+    st.divider()
+    if st.radio("¿Desea registrar nuevos signos vitales?", ["No", "Sí"], index=0) == "Sí":
+        # Formulario para nuevo registro
+        st.subheader("📝 Nuevo registro médico")
+
+        with st.form("nuevo_registro", clear_on_submit=True):
+            # Obtener timestamp actual
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
             
-            try:
-                ecg_files = sftp.listdir(REMOTE_ECG_DIR)
-                st.write(f"**Archivos ECG almacenados:** {len(ecg_files)}")
-            except:
-                st.write("**Directorio ECG:** No encontrado")
-            
-            sftp.close()
-    except:
-        st.write("\n⚠️ No se pudo conectar al servidor remoto")
+            id_paciente = st.text_input("📱 Número de celular del paciente (10 dígitos):")
+            nombre_paciente = st.text_input("👤 Nombre completo del paciente:")
+            presion_arterial = st.text_input("🩸 Presión arterial (ej. 120/80):")
+            temperatura = st.text_input("🌡️ Temperatura corporal (°C):")
+            oximetria = st.text_input("💓 Oximetría (%):")
+
+            if st.form_submit_button("💾 Guardar registro médico"):
+                # Validaciones
+                if not id_paciente.isdigit() or len(id_paciente) != 10:
+                    st.error("El número de celular debe contener exactamente 10 dígitos")
+                elif not all([nombre_paciente, presion_arterial, temperatura, oximetria]):
+                    st.error("Por favor complete todos los campos obligatorios")
+                else:
+                    nuevo_registro = {
+                        'timestamp': timestamp,
+                        'id_paciente': id_paciente,
+                        'nombre_paciente': nombre_paciente,
+                        'presion_arterial': presion_arterial,
+                        'temperatura': temperatura,
+                        'oximetria': oximetria,
+                        'estado': 'A'  # Todos los nuevos registros se crean como activos
+                    }
+
+                    if save_to_csv(nuevo_registro):
+                        st.success("✅ Registro guardado exitosamente!")
+                        st.balloons()
+                        time.sleep(2)
+                        st.rerun()
+
+if __name__ == "__main__":
+    main()

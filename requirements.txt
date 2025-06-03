@@ -1,5 +1,8 @@
 streamlit==1.32.2
-pandas==2.2.3
+pandas==2.2.3  # newer version that might work with Python 3.13
+numpy==1.26.4
+openpyxl==3.1.2
+python-dateutil==2.9.0.post0
 paramiko==3.4.0
-Pillow==10.2.0
-python-dotenv==1.0.0
+xlrd==2.0.1
+rich==13.7.1
