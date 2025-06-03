@@ -19,22 +19,23 @@ logging.basicConfig(
 # Configuración de la aplicación
 class Config:
     def __init__(self):
-        # Configuración local
-        self.CSV_FILENAME = "signos.csv"  # Nombre fijo del archivo CSV
-        self.ECG_FOLDER = "ecg_pdfs"     # Carpeta local para ECGs
-        self.LOGO_PATH = "escudo_COLOR.jpg"
+        # Configuración local desde secrets.toml
+        self.CSV_FILENAME = st.secrets["csv_materias_file"]     
+        self.ECG_FOLDER = st.secrets["ecg_folder"]              
+        self.LOGO_PATH = "escudo_COLOR.jpg"                    
         self.HIGHLIGHT_COLOR = "#90EE90"
         self.TIMEOUT = 30  # segundos para conexiones
-        
+
         # Configuración remota desde secrets.toml
         self.REMOTE = {
             'HOST': st.secrets["remote_host"],
             'USER': st.secrets["remote_user"],
             'PASSWORD': st.secrets["remote_password"],
-            'PORT': int(st.secrets.get("remote_port", 22)),
+            'PORT': int(st.secrets.get("remote_port")),
             'DIR': st.secrets["remote_dir"],
-            'ECG_DIR': st.secrets.get("remote_ecg_dir", "ecg_pdfs")
+            'ECG_DIR': st.secrets.get("remote_ecg_dir", st.secrets["ecg_folder"])
         }
+
 
 CONFIG = Config()
 
@@ -157,10 +158,11 @@ class SSHManager:
             ssh.close()
 
     @staticmethod
-    def sync_with_remote():
+    def sync_with_remote(show_status=True):
         """Sincroniza todos los archivos con el servidor remoto"""
         try:
-            st.info("🔄 Sincronizando con servidor remoto...")
+            if show_status:
+                st.info("🔄 Sincronizando con servidor remoto...")
             
             # 1. Sincronizar CSV
             remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
@@ -206,12 +208,14 @@ class SSHManager:
                     logging.error("Fallo al subir archivo CSV")
                     return False
             
-            st.success("✅ Sincronización completada")
+            if show_status:
+                st.success("✅ Sincronización completada")
             return True
             
         except Exception as e:
             logging.error(f"Error en sync_with_remote: {str(e)}")
-            st.error("❌ Error en sincronización con servidor remoto")
+            if show_status:
+                st.error("❌ Error en sincronización con servidor remoto")
             return False
 
 # Funciones principales
@@ -249,8 +253,8 @@ def save_record(data, ecg_file=None):
             updated_df = pd.concat([existing_df, record_df], ignore_index=True)
             updated_df.to_csv(CONFIG.CSV_FILENAME, index=False)
 
-        # 3. Sincronizar con servidor remoto
-        if SSHManager.sync_with_remote():
+        # 3. Sincronizar con servidor remoto (sin mostrar mensaje)
+        if SSHManager.sync_with_remote(show_status=False):
             st.success("Registro guardado y sincronizado correctamente")
             return True
         else:
@@ -276,9 +280,11 @@ def main():
 
     st.title("Registro de Signos Vitales")
 
-    # Sincronización inicial
-    if st.button("🔄 Sincronizar con servidor remoto"):
-        SSHManager.sync_with_remote()
+    # Sincronización automática al inicio
+    if not st.session_state.get('initial_sync_done', False):
+        with st.spinner("🔄 Sincronizando con servidor remoto..."):
+            SSHManager.sync_with_remote(show_status=False)
+        st.session_state.initial_sync_done = True
 
     # Formulario de captura
     with st.form("registro_form"):
@@ -322,42 +328,6 @@ def main():
                     time.sleep(2)
                     st.rerun()
 
-    # Visualización y gestión de registros
-    if Path(CONFIG.CSV_FILENAME).exists():
-        try:
-            st.divider()
-            st.subheader("📋 Registros Existentes")
-            
-            df = pd.read_csv(CONFIG.CSV_FILENAME)
-            if not df.empty:
-                # Mostrar tabla editable
-                edited_df = st.data_editor(
-                    df,
-                    column_config={
-                        "estado": st.column_config.SelectboxColumn(
-                            "Estado",
-                            options=["A", "N", "X"],
-                            help="A: Activo, N: Sin ECG, X: Eliminado"
-                        )
-                    },
-                    hide_index=True,
-                    use_container_width=True
-                )
-                
-                # Procesar cambios
-                if not edited_df.equals(df):
-                    # Filtrar solo registros activos (A o N)
-                    df_final = edited_df[edited_df['estado'].isin(['A', 'N'])]
-                    df_final.to_csv(CONFIG.CSV_FILENAME, index=False)
-                    
-                    if SSHManager.sync_with_remote():
-                        st.success("Cambios guardados y sincronizados")
-                        time.sleep(1)
-                        st.rerun()
-                    else:
-                        st.warning("Cambios guardados localmente (error en sincronización)")
-        except Exception as e:
-            st.error(f"Error al leer registros: {str(e)}")
 
 if __name__ == "__main__":
     main()
