@@ -19,26 +19,22 @@ logging.basicConfig(
 # Configuración de la aplicación
 class Config:
     def __init__(self):
-        self.SMTP_SERVER = st.secrets.get("smtp_server")
-        self.SMTP_PORT = st.secrets.get("smtp_port")
-        self.ECG_FOLDER = st.secrets.get("ecg_folder")
-        self.EMAIL_USER = st.secrets.get("email_user")
-        self.EMAIL_PASSWORD = st.secrets.get("email_password")
-        self.NOTIFICATION_EMAIL = st.secrets.get("notification_email")
-        self.CSV_PREFIX = "tesis_"  # Prefijo para archivos CSV
-        self.TIMEOUT_SECONDS = 30
-        self.MAX_KEYWORDS = 3
-        self.HIGHLIGHT_COLOR = "#90EE90"
+        # Configuración local
+        self.CSV_FILENAME = "signos.csv"  # Nombre fijo del archivo CSV
+        self.ECG_FOLDER = "ecg_pdfs"     # Carpeta local para ECGs
         self.LOGO_PATH = "escudo_COLOR.jpg"
-
+        self.HIGHLIGHT_COLOR = "#90EE90"
+        self.TIMEOUT = 30  # segundos para conexiones
+        
+        # Configuración remota desde secrets.toml
         self.REMOTE = {
-            'HOST': st.secrets.get("remote_host"),
-            'USER': st.secrets.get("remote_user"),
-            'PASSWORD': st.secrets.get("remote_password"),
-            'PORT': st.secrets.get("remote_port"),
-            'DIR': st.secrets.get("remote_dir")
+            'HOST': st.secrets["remote_host"],
+            'USER': st.secrets["remote_user"],
+            'PASSWORD': st.secrets["remote_password"],
+            'PORT': int(st.secrets.get("remote_port", 22)),
+            'DIR': st.secrets["remote_dir"],
+            'ECG_DIR': st.secrets.get("remote_ecg_dir", "ecg_pdfs")
         }
-
 
 CONFIG = Config()
 
@@ -166,7 +162,7 @@ class SSHManager:
         try:
             st.info("🔄 Sincronizando con servidor remoto...")
             
-            # 1. Sincronizar signos.csv
+            # 1. Sincronizar CSV
             remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
             
             # Descargar CSV remoto si existe
@@ -181,7 +177,7 @@ class SSHManager:
                     pd.DataFrame(columns=columns).to_csv(CONFIG.CSV_FILENAME, index=False)
             
             # 2. Sincronizar carpeta de ECGs
-            remote_ecg_dir = f"{CONFIG.REMOTE['DIR']}/{CONFIG.ECG_FOLDER}"
+            remote_ecg_dir = f"{CONFIG.REMOTE['DIR']}/{CONFIG.REMOTE['ECG_DIR']}"
             
             # Crear conexión para operaciones múltiples
             ssh = SSHManager.get_connection()
