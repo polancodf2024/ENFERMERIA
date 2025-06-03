@@ -192,6 +192,7 @@ def display_ecg_table(ecg_list):
         ecg_data.append({
             'Fecha/Hora': ecg['timestamp'].strftime("%Y-%m-%d %H:%M:%S"),
             'Archivo': ecg['filename'],
+            'Estado': 'Disponible',  # Nueva columna de estado
             'Acción': "📄 Ver"
         })
     
@@ -203,6 +204,7 @@ def display_ecg_table(ecg_list):
         column_config={
             "Fecha/Hora": st.column_config.Column(width="medium"),
             "Archivo": st.column_config.Column(width="large"),
+            "Estado": st.column_config.Column(width="small"),
             "Acción": st.column_config.Column(width="small")
         },
         hide_index=True,
@@ -211,7 +213,7 @@ def display_ecg_table(ecg_list):
     
     # Mostrar cada ECG seleccionado
     for idx, ecg in enumerate(ecg_list):
-        with st.expander(f"ECG {idx + 1} - {ecg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"):
+        with st.expander(f"ECG {idx + 1} - {ecg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')} - Estado: Disponible"):
             try:
                 # Opción de descarga
                 with open(ecg['path'], "rb") as f:
@@ -261,7 +263,7 @@ def main():
         with col2:
             st.image(Image.open(CONFIG.LOGO_PATH), width=200)
 
-    st.title("📊 Visualizador de Registros de Signos Vitales")
+    st.title("📊 Visualizador de Signos Vitales")
     st.markdown("---")
 
     # Cargar datos con indicador de progreso
@@ -301,7 +303,11 @@ def main():
             "presion_arterial": "Presión (mmHg)",
             "temperatura": "Temp. (°C)",
             "oximetria": "Oximetría (%)",
-            "estado": None,  # Ocultar columna estado
+            "estado": st.column_config.Column(  # Ahora visible con formato condicional
+                "Estado",
+                help="Estado del registro del paciente",
+                width="small"
+            ),
             "Seleccionar": st.column_config.CheckboxColumn(
                 "Ver ECG",
                 help="Seleccione para ver los ECGs del paciente",
@@ -322,9 +328,10 @@ def main():
         selected_row = selected_rows.iloc[0]
         selected_ecg_patient = selected_row['id_paciente']
         
-        # Mostrar ECGs del paciente seleccionado
+        # Mostrar estado del paciente seleccionado
         st.markdown("---")
         st.subheader(f"📄 ECGs del Paciente: {selected_ecg_patient}")
+        st.markdown(f"**Estado actual:** {selected_row['estado']}")
         
         with st.spinner(f"Buscando ECGs para paciente {selected_ecg_patient}..."):
             ecg_list = SSHManager.get_all_ecgs(selected_ecg_patient)
