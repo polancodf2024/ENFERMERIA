@@ -6,3 +6,6 @@ python-dateutil==2.9.0.post0
 paramiko==3.4.0
 xlrd==2.0.1
 rich==13.7.1
+Pillow==10.2.0  # Para manejo de imágenes (logo)
+streamlit-pdf-viewer==0.9.0  # Para visualización de PDFs
+python-magic==0.4.27  # Para detección de tipos de archivo

@@ -291,7 +291,7 @@ def main():
         st.subheader("Nuevo Registro")
         
         # Campos del formulario
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         id_paciente = st.text_input("📱 Número de celular (10 dígitos):", max_chars=10)
         nombre_paciente = st.text_input("👤 Nombre completo del paciente:")
         
