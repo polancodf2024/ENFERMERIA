@@ -1,8 +1,5 @@
 streamlit==1.32.2
-pandas==2.2.3  # newer version that might work with Python 3.13
-python-dotenv==1.0.0
+pandas==2.2.3
 paramiko==3.4.0
-xlrd==2.0.1
-rich==13.7.1
-Pillow==10.1.0
-
+Pillow==10.2.0
+python-dotenv==1.0.0
