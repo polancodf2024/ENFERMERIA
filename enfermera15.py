@@ -9,7 +9,6 @@ import tempfile
 import paramiko
 import time
 import base64
-import uuid
 
 # Configuración de logging mejorada
 logging.basicConfig(
@@ -45,6 +44,21 @@ class Config:
             raise
 
 CONFIG = Config()
+
+# Funciones auxiliares para manejo de teléfonos
+def validate_phone_number(phone):
+    """Valida que el número de celular tenga 10 dígitos"""
+    if not phone or not isinstance(phone, str):
+        return False
+    cleaned = ''.join(filter(str.isdigit, phone))
+    return len(cleaned) == 10
+
+def format_phone_number(phone):
+    """Da formato al número de celular: 55-1234-5678"""
+    if not validate_phone_number(phone):
+        return phone  # Retorna el original si no es válido
+    cleaned = ''.join(filter(str.isdigit, phone))
+    return f"{cleaned[:2]}-{cleaned[2:6]}-{cleaned[6:]}"
 
 class SSHManager:
     MAX_RETRIES = 3
@@ -251,6 +265,11 @@ def load_data():
                 logger.error(f"Columnas faltantes en CSV: {missing_cols}")
                 return pd.DataFrame()
             
+            # Limpiar y formatear números de teléfono
+            df['id_paciente'] = df['id_paciente'].astype(str).apply(
+                lambda x: ''.join(filter(str.isdigit, x))[:10]
+            df['id_paciente_formatted'] = df['id_paciente'].apply(format_phone_number)
+            
             # Convertir timestamp a datetime
             df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce')
             
@@ -381,7 +400,7 @@ def main():
         
         st.subheader("📋 Registros de Pacientes")
         
-        display_cols = ['timestamp', 'id_paciente', 'nombre_paciente', 
+        display_cols = ['timestamp', 'id_paciente_formatted', 'nombre_paciente', 
                        'presion_arterial', 'temperatura', 'oximetria', 'estado']
         
         display_data = data[display_cols].copy()
@@ -394,7 +413,11 @@ def main():
             display_data,
             column_config={
                 "timestamp": "Fecha/Hora",
-                "id_paciente": "ID Paciente",
+                "id_paciente_formatted": st.column_config.Column(
+                    "Teléfono",
+                    help="Número de celular del paciente (formato: XX-XXXX-XXXX)",
+                    width="medium"
+                ),
                 "nombre_paciente": "Nombre",
                 "presion_arterial": "Presión (mmHg)",
                 "temperatura": "Temp. (°C)",
@@ -413,7 +436,7 @@ def main():
             hide_index=True,
             use_container_width=True,
             height=table_height,
-            disabled=["timestamp", "id_paciente", "nombre_paciente", 
+            disabled=["timestamp", "id_paciente_formatted", "nombre_paciente", 
                      "presion_arterial", "temperatura", "oximetria", "estado"],
             key="patients_table"
         )
@@ -421,7 +444,8 @@ def main():
         selected_rows = edited_df[edited_df['Seleccionar']]
         if not selected_rows.empty:
             selected_row = selected_rows.iloc[0]
-            selected_ecg_patient = selected_row['id_paciente']
+            # Obtener el ID limpio (sin formato) para búsqueda
+            selected_ecg_patient = ''.join(filter(str.isdigit, selected_row['id_paciente_formatted']))
             
             st.markdown("---")
             st.subheader(f"📄 ECGs del Paciente: {selected_ecg_patient}")
