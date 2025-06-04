@@ -9,6 +9,7 @@ import tempfile
 import paramiko
 import time
 import base64
+import uuid
 
 # Configuración de logging mejorada
 logging.basicConfig(
@@ -27,7 +28,7 @@ class Config:
             self.ECG_FOLDER = st.secrets["ecg_folder"]              
             self.LOGO_PATH = "escudo_COLOR.jpg"                    
             self.HIGHLIGHT_COLOR = "#90EE90"
-            self.TIMEOUT = 45  # Aumentado de 30 a 45 segundos
+            self.TIMEOUT = 45
             self.ROW_HEIGHT = 35
             self.HEADER_HEIGHT = 70
 
@@ -35,9 +36,9 @@ class Config:
                 'HOST': st.secrets["remote_host"],
                 'USER': st.secrets["remote_user"],
                 'PASSWORD': st.secrets["remote_password"],
-                'PORT': int(st.secrets["remote_port"]),  # Usar el puerto especificado (3792)
+                'PORT': int(st.secrets["remote_port"]),
                 'DIR': st.secrets["remote_dir"],
-                'ECG_DIR': st.secrets["ecg_folder"]  # Usar directamente ecg_folder
+                'ECG_DIR': st.secrets["ecg_folder"]
             }
         except Exception as e:
             logger.error(f"Error al cargar configuración: {str(e)}")
@@ -45,10 +46,9 @@ class Config:
 
 CONFIG = Config()
 
-# Clase para manejo SSH mejorado con más logging
 class SSHManager:
     MAX_RETRIES = 3
-    RETRY_DELAY = 5  # segundos entre reintentos
+    RETRY_DELAY = 5
 
     @staticmethod
     def get_connection():
@@ -101,7 +101,6 @@ class SSHManager:
             
         try:
             with ssh.open_sftp() as sftp:
-                # Verificar si el archivo remoto existe
                 try:
                     file_info = sftp.stat(remote_path)
                     logger.info(f"Archivo remoto encontrado. Tamaño: {file_info.st_size} bytes")
@@ -110,7 +109,6 @@ class SSHManager:
                     logger.error(f"Archivo remoto no encontrado: {remote_path}")
                     return False
                 
-                # Descargar archivo con barra de progreso
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -177,7 +175,6 @@ class SSHManager:
                     st.error(f"No se encontró la carpeta de ECGs en el servidor: {remote_ecg_dir}")
                     return None
                 
-                # Filtrar archivos que coincidan con el patient_id
                 patient_ecgs = [f for f in ecg_files if str(patient_id) in f and f.lower().endswith('.pdf')]
                 logger.info(f"ECGs encontrados para paciente {patient_id}: {patient_ecgs}")
                 
@@ -185,21 +182,17 @@ class SSHManager:
                     st.warning(f"No se encontraron ECGs para el paciente {patient_id}")
                     return None
                 
-                # Ordenar por timestamp (asumiendo que el nombre comienza con timestamp)
                 patient_ecgs.sort(reverse=True)
                 
-                # Descargar temporalmente cada archivo con manejo de errores
                 for ecg_file in patient_ecgs:
                     try:
                         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
                             remote_path = f"{remote_ecg_dir}/{ecg_file}"
                             logger.info(f"Descargando ECG: {remote_path}")
                             
-                            # Barra de progreso para cada descarga
                             with st.spinner(f"Descargando {ecg_file}..."):
                                 sftp.get(remote_path, tmp_file.name)
                             
-                            # Extraer timestamp del nombre del archivo
                             filename_parts = ecg_file.split('_')
                             timestamp_str = ' '.join(filename_parts[:2]) if len(filename_parts) >= 2 else filename_parts[0]
                             timestamp_str = timestamp_str.replace("-", ":").split('.')[0]
@@ -229,11 +222,29 @@ class SSHManager:
         finally:
             ssh.close()
 
+def verify_file_integrity(original_path, downloaded_path):
+    """Verifica que el archivo descargado sea idéntico al original"""
+    try:
+        with open(original_path, 'rb') as f1, open(downloaded_path, 'rb') as f2:
+            content1 = f1.read()
+            content2 = f2.read()
+            
+            if content1 == content2:
+                logger.info("Verificación de integridad: Los archivos son idénticos")
+                return True
+            else:
+                logger.warning("Verificación de integridad: Los archivos son diferentes")
+                logger.warning(f"Tamaño original: {len(content1)} bytes, Tamaño descargado: {len(content2)} bytes")
+                return False
+    except Exception as e:
+        logger.error(f"Error en verificación de integridad: {str(e)}")
+        return False
 
 def load_data():
-    """Carga los datos del CSV remoto con mejor manejo de errores"""
+    """Carga los datos del CSV remoto preservando el original"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
-    local_csv = "temp_signos.csv"
+    local_csv = f"temp_signos_{uuid.uuid4().hex}.csv"
+    backup_csv = f"backup_signos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     
     logger.info(f"Intentando cargar datos desde {remote_csv_path}")
     st.info(f"Conectando al servidor para obtener datos...")
@@ -243,9 +254,24 @@ def load_data():
         return pd.DataFrame()
     
     try:
+        # Crear copia de seguridad del archivo descargado
+        import shutil
+        shutil.copy2(local_csv, backup_csv)
+        logger.info(f"Copia de seguridad creada: {backup_csv}")
+        
+        # Verificar integridad del archivo
+        if not verify_file_integrity(local_csv, backup_csv):
+            logger.warning("El archivo descargado no coincide con la copia de seguridad")
+        
+        # Crear copia temporal adicional para trabajar
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_copy:
+            with open(local_csv, 'rb') as original:
+                tmp_copy.write(original.read())
+            tmp_copy_path = tmp_copy.name
+        
         # Leer CSV con manejo de errores
         try:
-            df = pd.read_csv(local_csv)
+            df = pd.read_csv(tmp_copy_path)
             logger.info(f"Datos cargados. Columnas: {df.columns.tolist()}")
         except pd.errors.EmptyDataError:
             st.warning("El archivo CSV está vacío")
@@ -266,29 +292,17 @@ def load_data():
             logger.error(f"Columnas faltantes en CSV: {missing_cols}")
             return pd.DataFrame()
         
-        # Convertir timestamp a datetime con múltiples formatos de prueba
+        # Convertir timestamp a datetime
         try:
-            # Primero intentamos con el formato exacto
-            try:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M:%S')
-            except ValueError:
-                # Si falla, probamos con formato ISO8601
-                try:
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
-                except ValueError:
-                    # Si sigue fallando, probamos inferir el formato para cada elemento
-                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
+            df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce')
             
-            # Verificar que todas las fechas se hayan convertido
             if df['timestamp'].isnull().any():
                 st.warning("Algunas fechas no pudieron ser convertidas. Se intentará corregir...")
                 logger.warning("Algunas fechas no se convirtieron correctamente")
                 
-                # Intentar limpiar los strings de fecha antes de convertir
                 df['timestamp'] = df['timestamp'].astype(str).str.replace(r'[^0-9\-:\s]', '', regex=True)
                 df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 
-                # Eliminar filas con fechas inválidas
                 initial_count = len(df)
                 df = df.dropna(subset=['timestamp'])
                 if len(df) < initial_count:
@@ -306,12 +320,16 @@ def load_data():
         return df
         
     finally:
-        # Limpiar archivo temporal
+        # Limpieza exhaustiva de archivos temporales
         try:
             if os.path.exists(local_csv):
                 os.remove(local_csv)
+            if 'tmp_copy_path' in locals() and os.path.exists(tmp_copy_path):
+                os.remove(tmp_copy_path)
+            # Opcional: mantener el backup para diagnóstico
+            # os.remove(backup_csv)
         except Exception as e:
-            logger.error(f"Error al eliminar archivo temporal: {str(e)}")
+            logger.error(f"Error al eliminar archivos temporales: {str(e)}")
 
 def display_ecg_table(ecg_list):
     """Muestra una tabla con todos los ECGs del paciente"""
@@ -319,7 +337,6 @@ def display_ecg_table(ecg_list):
         st.warning("No se encontraron ECGs para este paciente")
         return
     
-    # Crear DataFrame para mostrar
     ecg_data = []
     for ecg in ecg_list:
         ecg_data.append({
@@ -331,7 +348,6 @@ def display_ecg_table(ecg_list):
     
     ecg_df = pd.DataFrame(ecg_data)
     
-    # Mostrar tabla con opción de selección
     st.dataframe(
         ecg_df,
         column_config={
@@ -344,17 +360,14 @@ def display_ecg_table(ecg_list):
         use_container_width=True
     )
     
-    # Mostrar cada ECG con mejor manejo de visualización
     for idx, ecg in enumerate(ecg_list):
         with st.expander(f"ECG {idx + 1} - {ecg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"):
             try:
-                # Mostrar información del ECG
                 col1, col2 = st.columns([1, 3])
                 with col1:
                     st.metric("Paciente", ecg['filename'].split('_')[2])
                     st.metric("Fecha", ecg['timestamp'].strftime('%Y-%m-%d'))
                     
-                    # Botón de descarga
                     with open(ecg['path'], "rb") as f:
                         st.download_button(
                             label="Descargar ECG",
@@ -366,13 +379,10 @@ def display_ecg_table(ecg_list):
                 
                 with col2:
                     st.markdown("**Visualización del ECG**")
-                    
-                    # Intentar mostrar el PDF
                     try:
                         from streamlit_pdf_viewer import pdf_viewer
                         pdf_viewer(ecg['path'], width=700)
                     except ImportError:
-                        # Alternativa si no está instalado streamlit-pdf-viewer
                         with open(ecg['path'], "rb") as f:
                             base64_pdf = base64.b64encode(f.read()).decode('utf-8')
                             pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000" type="application/pdf"></iframe>'
@@ -382,7 +392,6 @@ def display_ecg_table(ecg_list):
                 st.error(f"Error al mostrar ECG: {str(e)}")
                 logger.error(f"Error al mostrar ECG {ecg['path']}: {str(e)}")
             finally:
-                # Eliminar archivo temporal
                 try:
                     if os.path.exists(ecg['path']):
                         os.unlink(ecg['path'])
@@ -396,7 +405,6 @@ def main():
         layout="wide"
     )
 
-    # Logo
     if Path(CONFIG.LOGO_PATH).exists():
         col1, col2, col3 = st.columns([1, 3, 1])
         with col2:
@@ -405,14 +413,12 @@ def main():
     st.title("📊 Visualizador de Signos Vitales")
     st.markdown("---")
 
-    # Prueba de conexión SSH
     if st.sidebar.button("Probar conexión SSH"):
         if SSHManager.test_connection():
             st.sidebar.success("✅ Conexión SSH exitosa")
         else:
             st.sidebar.error("❌ Fallo en conexión SSH")
 
-    # Cargar datos con mejor manejo de estado
     data_status = st.empty()
     data_status.info("Conectando al servidor para obtener datos...")
     
@@ -425,27 +431,21 @@ def main():
             logger.warning("DataFrame vacío retornado por load_data()")
             return
 
-        # Mostrar estadísticas rápidas
         st.sidebar.markdown("### 📈 Estadísticas")
         st.sidebar.metric("Total de registros", len(data))
         st.sidebar.metric("Última actualización", data['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S'))
         
-        # Mostrar tabla con registros
         st.subheader("📋 Registros de Pacientes")
         
-        # Filtrar columnas y agregar columna de ECG
         display_cols = ['timestamp', 'id_paciente', 'nombre_paciente', 
                        'presion_arterial', 'temperatura', 'oximetria', 'estado']
         
-        # Formatear datos para visualización
         display_data = data[display_cols].copy()
         display_data['Seleccionar'] = False
         display_data['timestamp'] = display_data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
         
-        # Calcular altura de la tabla
         table_height = CONFIG.HEADER_HEIGHT + (len(display_data) * CONFIG.ROW_HEIGHT)
         
-        # Mostrar tabla con registros usando st.data_editor
         edited_df = st.data_editor(
             display_data,
             column_config={
@@ -474,13 +474,11 @@ def main():
             key="patients_table"
         )
 
-        # Obtener paciente seleccionado
         selected_rows = edited_df[edited_df['Seleccionar']]
         if not selected_rows.empty:
             selected_row = selected_rows.iloc[0]
             selected_ecg_patient = selected_row['id_paciente']
             
-            # Mostrar estado del paciente seleccionado
             st.markdown("---")
             st.subheader(f"📄 ECGs del Paciente: {selected_ecg_patient}")
             st.markdown(f"**Estado actual:** {selected_row['estado']}")
