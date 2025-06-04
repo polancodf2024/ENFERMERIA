@@ -229,6 +229,7 @@ class SSHManager:
         finally:
             ssh.close()
 
+
 def load_data():
     """Carga los datos del CSV remoto con mejor manejo de errores"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
@@ -265,11 +266,38 @@ def load_data():
             logger.error(f"Columnas faltantes en CSV: {missing_cols}")
             return pd.DataFrame()
         
-        # Convertir timestamp a datetime para ordenamiento
+        # Convertir timestamp a datetime con múltiples formatos de prueba
         try:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            # Primero intentamos con el formato exacto
+            try:
+                df['timestamp'] = pd.to_datetime(df['timestamp'], format='%Y-%m-%d %H:%M:%S')
+            except ValueError:
+                # Si falla, probamos con formato ISO8601
+                try:
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601')
+                except ValueError:
+                    # Si sigue fallando, probamos inferir el formato para cada elemento
+                    df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed')
+            
+            # Verificar que todas las fechas se hayan convertido
+            if df['timestamp'].isnull().any():
+                st.warning("Algunas fechas no pudieron ser convertidas. Se intentará corregir...")
+                logger.warning("Algunas fechas no se convirtieron correctamente")
+                
+                # Intentar limpiar los strings de fecha antes de convertir
+                df['timestamp'] = df['timestamp'].astype(str).str.replace(r'[^0-9\-:\s]', '', regex=True)
+                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+                
+                # Eliminar filas con fechas inválidas
+                initial_count = len(df)
+                df = df.dropna(subset=['timestamp'])
+                if len(df) < initial_count:
+                    st.warning(f"Se eliminaron {initial_count - len(df)} registros con fechas inválidas")
+                    logger.warning(f"Registros eliminados por fechas inválidas: {initial_count - len(df)}")
+            
             df = df.sort_values('timestamp', ascending=False)
             logger.info(f"Datos procesados correctamente. Registros: {len(df)}")
+            
         except Exception as e:
             st.error(f"Error al procesar fechas: {str(e)}")
             logger.error(f"Error al procesar timestamp: {str(e)}")
@@ -400,7 +428,7 @@ def main():
         # Mostrar estadísticas rápidas
         st.sidebar.markdown("### 📈 Estadísticas")
         st.sidebar.metric("Total de registros", len(data))
-        st.sidebar.metric("Última actualización", data['timestamp'].max().strftime('%Y-%m-%d %H:%M'))
+        st.sidebar.metric("Última actualización", data['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S'))
         
         # Mostrar tabla con registros
         st.subheader("📋 Registros de Pacientes")
