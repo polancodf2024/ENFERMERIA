@@ -35,7 +35,7 @@ class Config:
                 'HOST': st.secrets["remote_host"],
                 'USER': st.secrets["remote_user"],
                 'PASSWORD': st.secrets["remote_password"],
-                'PORT': int(st.secrets.get("remote_port", 22)),
+                'PORT': int(st.secrets.get("remote_port")),
                 'DIR': st.secrets["remote_dir"],
                 'ECG_DIR': st.secrets.get("remote_ecg_dir", st.secrets["ecg_folder"])
             }
