@@ -239,59 +239,26 @@ class SSHManager:
 def load_data():
     """Carga los datos del CSV remoto sin crear backups"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
-    
-    # Crear archivo temporal que se autodestruirá al cerrarse
+
     with tempfile.NamedTemporaryFile(suffix='.csv') as tmp_file:
         local_csv = tmp_file.name
-        logger.info(f"Intentando cargar datos desde {remote_csv_path}")
-        st.info(f"Conectando al servidor para obtener datos...")
-        
         if not SSHManager.download_file(remote_csv_path, local_csv):
-            st.error("No se pudo descargar el archivo CSV desde el servidor")
             return pd.DataFrame()
-        
+
         try:
-            # Leer CSV directamente
             df = pd.read_csv(local_csv)
-            logger.info(f"Datos cargados. Columnas: {df.columns.tolist()}")
-            
-            # Verificar columnas requeridas
-            required_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
-                               'presion_arterial', 'temperatura', 'oximetria', 'estado']
-            missing_cols = [col for col in required_columns if col not in df.columns]
-            
-            if missing_cols:
-                st.error(f"El CSV no tiene las columnas requeridas. Faltan: {missing_cols}")
-                logger.error(f"Columnas faltantes en CSV: {missing_cols}")
-                return pd.DataFrame()
-            
-            # Limpiar y formatear números de teléfono
+
+            # LÍNEA CORREGIDA:
             df['id_paciente'] = df['id_paciente'].astype(str).apply(
                 lambda x: ''.join(filter(str.isdigit, x))[:10]
+            )
+
             df['id_paciente_formatted'] = df['id_paciente'].apply(format_phone_number)
-            
-            # Convertir timestamp a datetime
-            df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce')
-            
-            if df['timestamp'].isnull().any():
-                st.warning("Algunas fechas no pudieron ser convertidas.")
-                logger.warning("Algunas fechas no se convirtieron correctamente")
-                
-                initial_count = len(df)
-                df = df.dropna(subset=['timestamp'])
-                if len(df) < initial_count:
-                    st.warning(f"Se eliminaron {initial_count - len(df)} registros con fechas inválidas")
-            
-            df = df.sort_values('timestamp', ascending=False)
-            logger.info(f"Datos procesados correctamente. Registros: {len(df)}")
-            return df
-            
-        except pd.errors.EmptyDataError:
-            st.warning("El archivo CSV está vacío")
-            return pd.DataFrame()
+            df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+            return df.dropna(subset=['timestamp']).sort_values('timestamp', ascending=False)
+
         except Exception as e:
-            st.error(f"Error al leer el archivo CSV: {str(e)}")
-            logger.error(f"Error al leer CSV: {str(e)}")
+            st.error(f"Error al leer CSV: {str(e)}")
             return pd.DataFrame()
 
 def display_ecg_table(ecg_list):
