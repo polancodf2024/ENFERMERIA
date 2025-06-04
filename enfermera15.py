@@ -222,114 +222,58 @@ class SSHManager:
         finally:
             ssh.close()
 
-def verify_file_integrity(original_path, downloaded_path):
-    """Verifica que el archivo descargado sea idéntico al original"""
-    try:
-        with open(original_path, 'rb') as f1, open(downloaded_path, 'rb') as f2:
-            content1 = f1.read()
-            content2 = f2.read()
-            
-            if content1 == content2:
-                logger.info("Verificación de integridad: Los archivos son idénticos")
-                return True
-            else:
-                logger.warning("Verificación de integridad: Los archivos son diferentes")
-                logger.warning(f"Tamaño original: {len(content1)} bytes, Tamaño descargado: {len(content2)} bytes")
-                return False
-    except Exception as e:
-        logger.error(f"Error en verificación de integridad: {str(e)}")
-        return False
-
 def load_data():
-    """Carga los datos del CSV remoto preservando el original"""
+    """Carga los datos del CSV remoto sin crear backups"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
-    local_csv = f"temp_signos_{uuid.uuid4().hex}.csv"
-    backup_csv = f"backup_signos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     
-    logger.info(f"Intentando cargar datos desde {remote_csv_path}")
-    st.info(f"Conectando al servidor para obtener datos...")
-    
-    if not SSHManager.download_file(remote_csv_path, local_csv):
-        st.error("No se pudo descargar el archivo CSV desde el servidor")
-        return pd.DataFrame()
-    
-    try:
-        # Crear copia de seguridad del archivo descargado
-        import shutil
-        shutil.copy2(local_csv, backup_csv)
-        logger.info(f"Copia de seguridad creada: {backup_csv}")
+    # Crear archivo temporal que se autodestruirá al cerrarse
+    with tempfile.NamedTemporaryFile(suffix='.csv') as tmp_file:
+        local_csv = tmp_file.name
+        logger.info(f"Intentando cargar datos desde {remote_csv_path}")
+        st.info(f"Conectando al servidor para obtener datos...")
         
-        # Verificar integridad del archivo
-        if not verify_file_integrity(local_csv, backup_csv):
-            logger.warning("El archivo descargado no coincide con la copia de seguridad")
+        if not SSHManager.download_file(remote_csv_path, local_csv):
+            st.error("No se pudo descargar el archivo CSV desde el servidor")
+            return pd.DataFrame()
         
-        # Crear copia temporal adicional para trabajar
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.csv') as tmp_copy:
-            with open(local_csv, 'rb') as original:
-                tmp_copy.write(original.read())
-            tmp_copy_path = tmp_copy.name
-        
-        # Leer CSV con manejo de errores
         try:
-            df = pd.read_csv(tmp_copy_path)
+            # Leer CSV directamente
+            df = pd.read_csv(local_csv)
             logger.info(f"Datos cargados. Columnas: {df.columns.tolist()}")
-        except pd.errors.EmptyDataError:
-            st.warning("El archivo CSV está vacío")
-            logger.warning("Archivo CSV descargado pero vacío")
-            return pd.DataFrame()
-        except Exception as e:
-            st.error(f"Error al leer el archivo CSV: {str(e)}")
-            logger.error(f"Error al leer CSV: {str(e)}")
-            return pd.DataFrame()
-        
-        # Verificar columnas requeridas
-        required_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
-                           'presion_arterial', 'temperatura', 'oximetria', 'estado']
-        missing_cols = [col for col in required_columns if col not in df.columns]
-        
-        if missing_cols:
-            st.error(f"El CSV no tiene las columnas requeridas. Faltan: {missing_cols}")
-            logger.error(f"Columnas faltantes en CSV: {missing_cols}")
-            return pd.DataFrame()
-        
-        # Convertir timestamp a datetime
-        try:
+            
+            # Verificar columnas requeridas
+            required_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
+                               'presion_arterial', 'temperatura', 'oximetria', 'estado']
+            missing_cols = [col for col in required_columns if col not in df.columns]
+            
+            if missing_cols:
+                st.error(f"El CSV no tiene las columnas requeridas. Faltan: {missing_cols}")
+                logger.error(f"Columnas faltantes en CSV: {missing_cols}")
+                return pd.DataFrame()
+            
+            # Convertir timestamp a datetime
             df['timestamp'] = pd.to_datetime(df['timestamp'], format='mixed', errors='coerce')
             
             if df['timestamp'].isnull().any():
-                st.warning("Algunas fechas no pudieron ser convertidas. Se intentará corregir...")
+                st.warning("Algunas fechas no pudieron ser convertidas.")
                 logger.warning("Algunas fechas no se convirtieron correctamente")
-                
-                df['timestamp'] = df['timestamp'].astype(str).str.replace(r'[^0-9\-:\s]', '', regex=True)
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
                 
                 initial_count = len(df)
                 df = df.dropna(subset=['timestamp'])
                 if len(df) < initial_count:
                     st.warning(f"Se eliminaron {initial_count - len(df)} registros con fechas inválidas")
-                    logger.warning(f"Registros eliminados por fechas inválidas: {initial_count - len(df)}")
             
             df = df.sort_values('timestamp', ascending=False)
             logger.info(f"Datos procesados correctamente. Registros: {len(df)}")
+            return df
             
-        except Exception as e:
-            st.error(f"Error al procesar fechas: {str(e)}")
-            logger.error(f"Error al procesar timestamp: {str(e)}")
+        except pd.errors.EmptyDataError:
+            st.warning("El archivo CSV está vacío")
             return pd.DataFrame()
-        
-        return df
-        
-    finally:
-        # Limpieza exhaustiva de archivos temporales
-        try:
-            if os.path.exists(local_csv):
-                os.remove(local_csv)
-            if 'tmp_copy_path' in locals() and os.path.exists(tmp_copy_path):
-                os.remove(tmp_copy_path)
-            # Opcional: mantener el backup para diagnóstico
-            # os.remove(backup_csv)
         except Exception as e:
-            logger.error(f"Error al eliminar archivos temporales: {str(e)}")
+            st.error(f"Error al leer el archivo CSV: {str(e)}")
+            logger.error(f"Error al leer CSV: {str(e)}")
+            return pd.DataFrame()
 
 def display_ecg_table(ecg_list):
     """Muestra una tabla con todos los ECGs del paciente"""
