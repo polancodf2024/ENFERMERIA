@@ -85,8 +85,34 @@ class SSHManager:
                     return None
 
     @staticmethod
+    def upload_file(local_path, remote_path):
+        """Sube un archivo al servidor remoto"""
+        ssh = SSHManager.get_connection()
+        if not ssh:
+            return False
+            
+        try:
+            with ssh.open_sftp() as sftp:
+                # Verificar si existe el directorio remoto, si no, crearlo
+                remote_dir = os.path.dirname(remote_path)
+                try:
+                    sftp.stat(remote_dir)
+                except FileNotFoundError:
+                    sftp.mkdir(remote_dir)
+                
+                # Subir el archivo
+                sftp.put(local_path, remote_path)
+                logging.info(f"Archivo subido exitosamente: {local_path} -> {remote_path}")
+                return True
+        except Exception as e:
+            logging.error(f"Error al subir archivo: {str(e)}")
+            return False
+        finally:
+            ssh.close()
+
+    @staticmethod
     def append_to_remote_csv(data):
-        """Añade un registro al CSV remoto de manera eficiente"""
+        """Añade un registro al CSV remoto"""
         ssh = SSHManager.get_connection()
         if not ssh:
             logging.error("No se pudo establecer conexión SSH")
@@ -143,16 +169,23 @@ class SSHManager:
 
 # Funciones principales
 def save_record(data, ecg_file=None):
-    """Guarda el registro directamente en el servidor remoto"""
+    """Guarda el registro en el servidor remoto"""
     try:
-        # 1. Guardar ECG localmente si existe
+        # 1. Guardar ECG local y remotamente si existe
         if ecg_file is not None:
             timestamp_str = data['timestamp'].replace(":", "-").replace(" ", "_")
             ecg_filename = f"{timestamp_str}_{data['id_paciente']}.pdf"
-            ecg_path = f"{CONFIG.ECG_FOLDER}/{ecg_filename}"
+            local_ecg_path = f"{CONFIG.ECG_FOLDER}/{ecg_filename}"
+            remote_ecg_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.REMOTE['ECG_DIR']}/{ecg_filename}"
             
-            with open(ecg_path, "wb") as f:
+            # Guardar localmente
+            with open(local_ecg_path, "wb") as f:
                 f.write(ecg_file.getbuffer())
+            
+            # Subir al servidor remoto
+            if not SSHManager.upload_file(local_ecg_path, remote_ecg_path):
+                st.error("❌ Error al subir el ECG al servidor remoto")
+                return False
             
             data['estado'] = 'A'  # Con ECG
         else:
@@ -171,7 +204,7 @@ def save_record(data, ecg_file=None):
         st.error(f"❌ Error inesperado al guardar el registro: {str(e)}")
         return False
 
-# Interfaz de usuario
+# Interfaz de usuario (main() permanece igual)
 def main():
     st.set_page_config(
         page_title="Registro de Signos Vitales",
