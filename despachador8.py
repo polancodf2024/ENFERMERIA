@@ -20,7 +20,7 @@ logging.basicConfig(
 class Config:
     def __init__(self):
         # Configuración local desde secrets.toml
-        self.CSV_FILENAME = st.secrets["csv_materias_file"]     
+        self.CSV_FILENAME = st.secrets["csv_signos_file"]     
         self.ECG_FOLDER = st.secrets["ecg_folder"]              
         self.LOGO_PATH = "escudo_COLOR.jpg"                    
         self.HIGHLIGHT_COLOR = "#90EE90"

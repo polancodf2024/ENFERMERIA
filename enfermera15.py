@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 class Config:
     def __init__(self):
         try:
-            self.CSV_FILENAME = st.secrets["csv_materias_file"]     
+            self.CSV_FILENAME = st.secrets["csv_signos_file"]     
             self.ECG_FOLDER = st.secrets["ecg_folder"]              
             self.LOGO_PATH = "escudo_COLOR.jpg"                    
             self.HIGHLIGHT_COLOR = "#90EE90"
@@ -35,9 +35,9 @@ class Config:
                 'HOST': st.secrets["remote_host"],
                 'USER': st.secrets["remote_user"],
                 'PASSWORD': st.secrets["remote_password"],
-                'PORT': int(st.secrets.get("remote_port")),
+                'PORT': int(st.secrets["remote_port"]),  # Usar el puerto especificado (3792)
                 'DIR': st.secrets["remote_dir"],
-                'ECG_DIR': st.secrets.get("remote_ecg_dir", st.secrets["ecg_folder"])
+                'ECG_DIR': st.secrets["ecg_folder"]  # Usar directamente ecg_folder
             }
         except Exception as e:
             logger.error(f"Error al cargar configuración: {str(e)}")
