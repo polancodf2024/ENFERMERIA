@@ -209,7 +209,7 @@ def main():
     # Logo y título
     if Path(CONFIG.LOGO_PATH).exists():
         st.image(Image.open(CONFIG.LOGO_PATH), width=200)
-    
+
     st.title("📊 Visualizador de Signos Vitales")
     st.markdown("---")
 
@@ -225,7 +225,7 @@ def main():
         Seleccionar=False,
         timestamp=data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
     )
-    
+
     edited_df = st.data_editor(
         display_data[[
             'timestamp', 'id_paciente_formatted', 'nombre_paciente',
@@ -242,16 +242,17 @@ def main():
             "Seleccionar": st.column_config.CheckboxColumn("Ver ECG")
         },
         hide_index=True,
-        disabled=["timestamp", "id_paciente_formatted", "nombre_paciente", 
+        disabled=["timestamp", "id_paciente_formatted", "nombre_paciente",
                  "presion_arterial", "temperatura", "oximetria", "estado"]
     )
 
     # Mostrar ECGs seleccionados
-    if selected := edited_df[edited_df['Seleccionar']].iloc[:1]:
+    selected = edited_df[edited_df['Seleccionar']].iloc[:1]
+    if not selected.empty:
         patient_id = ''.join(filter(str.isdigit, selected['id_paciente_formatted'].iloc[0]))
         st.markdown("---")
         st.subheader(f"ECGs del Paciente: {patient_id}")
-        
+
         if ecg_list := SSHManager.get_all_ecgs(patient_id):
             display_ecg_table(ecg_list)
 
