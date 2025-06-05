@@ -10,7 +10,7 @@ import paramiko
 import time
 import base64
 
-# Configuración de logging mejorada
+# Configuración de logging
 logging.basicConfig(
     filename='viewer.log',
     level=logging.INFO,
@@ -45,18 +45,18 @@ class Config:
 
 CONFIG = Config()
 
-# Funciones auxiliares para manejo de teléfonos
+# Funciones auxiliares
 def validate_phone_number(phone):
-    """Valida que el número de celular tenga 10 dígitos"""
+    """Valida que el número tenga 10 dígitos"""
     if not phone or not isinstance(phone, str):
         return False
     cleaned = ''.join(filter(str.isdigit, phone))
     return len(cleaned) == 10
 
 def format_phone_number(phone):
-    """Da formato al número de celular: 55-1234-5678"""
+    """Formato: 55-1234-5678"""
     if not validate_phone_number(phone):
-        return phone  # Retorna el original si no es válido
+        return phone
     cleaned = ''.join(filter(str.isdigit, phone))
     return f"{cleaned[:2]}-{cleaned[2:6]}-{cleaned[6:]}"
 
@@ -66,112 +66,46 @@ class SSHManager:
 
     @staticmethod
     def get_connection():
-        """Establece conexión SSH con reintentos y mejor logging"""
+        """Establece conexión SSH"""
         ssh = paramiko.SSHClient()
         ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         
         for attempt in range(SSHManager.MAX_RETRIES):
             try:
-                logger.info(f"Intentando conexión SSH (intento {attempt + 1}) a {CONFIG.REMOTE['HOST']}:{CONFIG.REMOTE['PORT']}")
                 ssh.connect(
                     hostname=CONFIG.REMOTE['HOST'],
                     port=CONFIG.REMOTE['PORT'],
                     username=CONFIG.REMOTE['USER'],
                     password=CONFIG.REMOTE['PASSWORD'],
-                    timeout=CONFIG.TIMEOUT,
-                    banner_timeout=30
+                    timeout=CONFIG.TIMEOUT
                 )
-                logger.info("Conexión SSH establecida exitosamente")
                 return ssh
-            except paramiko.AuthenticationException as e:
-                logger.error(f"Error de autenticación SSH: {str(e)}")
-                st.error("Error de autenticación con el servidor remoto")
-                return None
-            except paramiko.SSHException as e:
-                logger.warning(f"Intento {attempt + 1} fallido (SSHException): {str(e)}")
-                if attempt < SSHManager.MAX_RETRIES - 1:
-                    time.sleep(SSHManager.RETRY_DELAY)
-                else:
-                    logger.error("Fallo definitivo al conectar via SSH (SSHException)")
-                    st.error("No se pudo establecer conexión SSH después de varios intentos")
-                    return None
             except Exception as e:
-                logger.warning(f"Intento {attempt + 1} fallido (Error general): {str(e)}")
-                if attempt < SSHManager.MAX_RETRIES - 1:
-                    time.sleep(SSHManager.RETRY_DELAY)
-                else:
-                    logger.error(f"Fallo definitivo al conectar via SSH (Error general): {str(e)}")
-                    st.error(f"Error de conexión: {str(e)}")
+                if attempt == SSHManager.MAX_RETRIES - 1:
+                    st.error(f"Error de conexión SSH: {str(e)}")
                     return None
+                time.sleep(SSHManager.RETRY_DELAY)
 
     @staticmethod
     def download_file(remote_path, local_path):
-        """Descarga un archivo remoto con manejo robusto de errores"""
-        logger.info(f"Intentando descargar: {remote_path} -> {local_path}")
+        """Descarga archivo remoto"""
         ssh = SSHManager.get_connection()
         if not ssh:
-            st.error("No se pudo establecer conexión SSH para descarga")
             return False
             
         try:
             with ssh.open_sftp() as sftp:
-                try:
-                    file_info = sftp.stat(remote_path)
-                    logger.info(f"Archivo remoto encontrado. Tamaño: {file_info.st_size} bytes")
-                except FileNotFoundError:
-                    st.error(f"Archivo remoto no encontrado: {remote_path}")
-                    logger.error(f"Archivo remoto no encontrado: {remote_path}")
-                    return False
-                
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                def progress_callback(bytes_transferred, total_bytes):
-                    progress = bytes_transferred / total_bytes
-                    progress_bar.progress(progress)
-                    status_text.text(f"Descargando... {bytes_transferred}/{total_bytes} bytes ({progress:.1%})")
-                
-                sftp.get(remote_path, local_path, callback=progress_callback)
-                
-                progress_bar.empty()
-                status_text.empty()
-                logger.info(f"Archivo descargado exitosamente: {remote_path} -> {local_path}")
-                st.success("Descarga completada")
+                sftp.get(remote_path, local_path)
                 return True
-                
         except Exception as e:
-            st.error(f"Error al descargar archivo: {str(e)}")
-            logger.error(f"Error en download_file: {str(e)}")
+            st.error(f"Error al descargar: {str(e)}")
             return False
-        finally:
-            ssh.close()
-
-    @staticmethod
-    def test_connection():
-        """Prueba la conexión SSH y lista archivos"""
-        ssh = SSHManager.get_connection()
-        if not ssh:
-            return False
-        
-        try:
-            with ssh.open_sftp() as sftp:
-                try:
-                    remote_dir = CONFIG.REMOTE['DIR']
-                    files = sftp.listdir(remote_dir)
-                    logger.info(f"Conexión SSH exitosa. Archivos en {remote_dir}: {files}")
-                    st.success(f"Conexión SSH exitosa. Se encontraron {len(files)} archivos en el directorio remoto.")
-                    return True
-                except Exception as e:
-                    st.error(f"No se pudo listar directorio remoto: {str(e)}")
-                    logger.error(f"Error al listar directorio remoto: {str(e)}")
-                    return False
         finally:
             ssh.close()
 
     @staticmethod
     def get_all_ecgs(patient_id):
-        """Obtiene todos los ECGs para un paciente con mejor manejo de errores"""
-        logger.info(f"Buscando ECGs para paciente {patient_id}")
+        """Obtiene ECGs del paciente"""
         ssh = SSHManager.get_connection()
         if not ssh:
             return None
@@ -181,250 +115,145 @@ class SSHManager:
             ecg_list = []
             
             with ssh.open_sftp() as sftp:
-                try:
-                    ecg_files = sftp.listdir(remote_ecg_dir)
-                    logger.info(f"Archivos encontrados en {remote_ecg_dir}: {ecg_files}")
-                except FileNotFoundError:
-                    logger.error(f"Carpeta ECG no encontrada: {remote_ecg_dir}")
-                    st.error(f"No se encontró la carpeta de ECGs en el servidor: {remote_ecg_dir}")
+                ecg_files = [f for f in sftp.listdir(remote_ecg_dir) 
+                           if str(patient_id) in f and f.lower().endswith('.pdf')]
+                
+                if not ecg_files:
+                    st.warning(f"No hay ECGs para el paciente {patient_id}")
                     return None
                 
-                patient_ecgs = [f for f in ecg_files if str(patient_id) in f and f.lower().endswith('.pdf')]
-                logger.info(f"ECGs encontrados para paciente {patient_id}: {patient_ecgs}")
+                for ecg_file in sorted(ecg_files, reverse=True):
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
+                        sftp.get(f"{remote_ecg_dir}/{ecg_file}", tmp_file.name)
+                        
+                        try:
+                            timestamp = datetime.strptime(
+                                '_'.join(ecg_file.split('_')[:2]).replace("-", ":"),
+                                "%Y-%m-%d_%H:%M:%S"
+                            )
+                        except:
+                            timestamp = datetime.now()
+                        
+                        ecg_list.append({
+                            'path': tmp_file.name,
+                            'timestamp': timestamp,
+                            'filename': ecg_file
+                        })
                 
-                if not patient_ecgs:
-                    st.warning(f"No se encontraron ECGs para el paciente {patient_id}")
-                    return None
-                
-                patient_ecgs.sort(reverse=True)
-                
-                for ecg_file in patient_ecgs:
-                    try:
-                        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
-                            remote_path = f"{remote_ecg_dir}/{ecg_file}"
-                            logger.info(f"Descargando ECG: {remote_path}")
-                            
-                            with st.spinner(f"Descargando {ecg_file}..."):
-                                sftp.get(remote_path, tmp_file.name)
-                            
-                            filename_parts = ecg_file.split('_')
-                            timestamp_str = ' '.join(filename_parts[:2]) if len(filename_parts) >= 2 else filename_parts[0]
-                            timestamp_str = timestamp_str.replace("-", ":").split('.')[0]
-                            
-                            try:
-                                timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
-                            except ValueError:
-                                logger.warning(f"No se pudo parsear timestamp, usando hora de modificación")
-                                timestamp = datetime.fromtimestamp(os.path.getmtime(tmp_file.name))
-                            
-                            ecg_list.append({
-                                'path': tmp_file.name,
-                                'timestamp': timestamp,
-                                'filename': ecg_file
-                            })
-                    except Exception as e:
-                        logger.error(f"Error procesando archivo {ecg_file}: {str(e)}")
-                        st.warning(f"Error al procesar ECG {ecg_file}: {str(e)}")
-                        continue
-                
-                return ecg_list if ecg_list else None
-                    
+                return ecg_list
         except Exception as e:
-            logger.error(f"Error en get_all_ecgs: {str(e)}")
             st.error(f"Error al obtener ECGs: {str(e)}")
             return None
         finally:
             ssh.close()
 
 def load_data():
-    """Carga los datos del CSV remoto sin crear backups"""
+    """Carga datos del CSV"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
 
     with tempfile.NamedTemporaryFile(suffix='.csv') as tmp_file:
-        local_csv = tmp_file.name
-        if not SSHManager.download_file(remote_csv_path, local_csv):
+        if not SSHManager.download_file(remote_csv_path, tmp_file.name):
             return pd.DataFrame()
 
         try:
-            df = pd.read_csv(local_csv)
-
-            # LÍNEA CORREGIDA:
-            df['id_paciente'] = df['id_paciente'].astype(str).apply(
-                lambda x: ''.join(filter(str.isdigit, x))[:10]
-            )
-
+            df = pd.read_csv(tmp_file.name)
+            # Extraer solo dígitos del ID
+            df['id_paciente'] = df['id_paciente'].astype(str).str.extract(r'(\d+)')[0].str[:10]
+            # Crear columna formateada
             df['id_paciente_formatted'] = df['id_paciente'].apply(format_phone_number)
             df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
             return df.dropna(subset=['timestamp']).sort_values('timestamp', ascending=False)
-
         except Exception as e:
             st.error(f"Error al leer CSV: {str(e)}")
             return pd.DataFrame()
 
 def display_ecg_table(ecg_list):
-    """Muestra una tabla con todos los ECGs del paciente"""
+    """Muestra tabla de ECGs"""
     if not ecg_list:
-        st.warning("No se encontraron ECGs para este paciente")
         return
     
-    ecg_data = []
     for ecg in ecg_list:
-        ecg_data.append({
-            'Fecha/Hora': ecg['timestamp'].strftime("%Y-%m-%d %H:%M:%S"),
-            'Archivo': ecg['filename'],
-            'Estado': 'Disponible',
-            'Acción': "📄 Ver"
-        })
-    
-    ecg_df = pd.DataFrame(ecg_data)
-    
-    st.dataframe(
-        ecg_df,
-        column_config={
-            "Fecha/Hora": st.column_config.Column(width="medium"),
-            "Archivo": st.column_config.Column(width="large"),
-            "Estado": st.column_config.Column(width="small"),
-            "Acción": st.column_config.Column(width="small")
-        },
-        hide_index=True,
-        use_container_width=True
-    )
-    
-    for idx, ecg in enumerate(ecg_list):
-        with st.expander(f"ECG {idx + 1} - {ecg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"):
+        with st.expander(f"ECG - {ecg['timestamp'].strftime('%Y-%m-%d %H:%M:%S')}"):
+            col1, col2 = st.columns([1, 3])
+            with col1:
+                st.metric("Paciente", ecg['filename'].split('_')[2])
+                st.metric("Fecha", ecg['timestamp'].strftime('%Y-%m-%d'))
+                
+                with open(ecg['path'], "rb") as f:
+                    st.download_button(
+                        "Descargar ECG",
+                        data=f,
+                        file_name=ecg['filename'],
+                        mime="application/pdf"
+                    )
+            
+            with col2:
+                with open(ecg['path'], "rb") as f:
+                    base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+                    st.markdown(
+                        f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000"></iframe>',
+                        unsafe_allow_html=True
+                    )
+            
             try:
-                col1, col2 = st.columns([1, 3])
-                with col1:
-                    st.metric("Paciente", ecg['filename'].split('_')[2])
-                    st.metric("Fecha", ecg['timestamp'].strftime('%Y-%m-%d'))
-                    
-                    with open(ecg['path'], "rb") as f:
-                        st.download_button(
-                            label="Descargar ECG",
-                            data=f,
-                            file_name=ecg['filename'],
-                            mime="application/pdf",
-                            key=f"download_{idx}"
-                        )
-                
-                with col2:
-                    st.markdown("**Visualización del ECG**")
-                    try:
-                        from streamlit_pdf_viewer import pdf_viewer
-                        pdf_viewer(ecg['path'], width=700)
-                    except ImportError:
-                        with open(ecg['path'], "rb") as f:
-                            base64_pdf = base64.b64encode(f.read()).decode('utf-8')
-                            pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="700" height="1000" type="application/pdf"></iframe>'
-                            st.markdown(pdf_display, unsafe_allow_html=True)
-                
-            except Exception as e:
-                st.error(f"Error al mostrar ECG: {str(e)}")
-                logger.error(f"Error al mostrar ECG {ecg['path']}: {str(e)}")
-            finally:
-                try:
-                    if os.path.exists(ecg['path']):
-                        os.unlink(ecg['path'])
-                except Exception as e:
-                    logger.error(f"Error al eliminar temporal {ecg['path']}: {str(e)}")
+                os.unlink(ecg['path'])
+            except:
+                pass
 
 def main():
     st.set_page_config(
         page_title="Visualizador de Signos Vitales",
-        page_icon="📊",
         layout="wide"
     )
 
+    # Logo y título
     if Path(CONFIG.LOGO_PATH).exists():
-        col1, col2, col3 = st.columns([1, 3, 1])
-        with col2:
-            st.image(Image.open(CONFIG.LOGO_PATH), width=200)
-
+        st.image(Image.open(CONFIG.LOGO_PATH), width=200)
+    
     st.title("📊 Visualizador de Signos Vitales")
     st.markdown("---")
 
-    if st.sidebar.button("Probar conexión SSH"):
-        if SSHManager.test_connection():
-            st.sidebar.success("✅ Conexión SSH exitosa")
-        else:
-            st.sidebar.error("❌ Fallo en conexión SSH")
+    # Carga de datos
+    data = load_data()
+    if data.empty:
+        st.warning("No hay registros disponibles")
+        return
 
-    data_status = st.empty()
-    data_status.info("Conectando al servidor para obtener datos...")
+    # Tabla principal
+    st.subheader("Registros de Pacientes")
+    display_data = data.assign(
+        Seleccionar=False,
+        timestamp=data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
+    )
     
-    try:
-        data = load_data()
-        data_status.empty()
-        
-        if data.empty:
-            st.warning("No hay registros disponibles o no se pudieron cargar los datos")
-            logger.warning("DataFrame vacío retornado por load_data()")
-            return
+    edited_df = st.data_editor(
+        display_data[[
+            'timestamp', 'id_paciente_formatted', 'nombre_paciente',
+            'presion_arterial', 'temperatura', 'oximetria', 'estado', 'Seleccionar'
+        ]],
+        column_config={
+            "timestamp": "Fecha/Hora",
+            "id_paciente_formatted": "Teléfono",
+            "nombre_paciente": "Nombre",
+            "presion_arterial": "Presión (mmHg)",
+            "temperatura": "Temp. (°C)",
+            "oximetria": "Oximetría (%)",
+            "estado": "Estado",
+            "Seleccionar": st.column_config.CheckboxColumn("Ver ECG")
+        },
+        hide_index=True,
+        disabled=["timestamp", "id_paciente_formatted", "nombre_paciente", 
+                 "presion_arterial", "temperatura", "oximetria", "estado"]
+    )
 
-        st.sidebar.markdown("### 📈 Estadísticas")
-        st.sidebar.metric("Total de registros", len(data))
-        st.sidebar.metric("Última actualización", data['timestamp'].max().strftime('%Y-%m-%d %H:%M:%S'))
+    # Mostrar ECGs seleccionados
+    if selected := edited_df[edited_df['Seleccionar']].iloc[:1]:
+        patient_id = ''.join(filter(str.isdigit, selected['id_paciente_formatted'].iloc[0]))
+        st.markdown("---")
+        st.subheader(f"ECGs del Paciente: {patient_id}")
         
-        st.subheader("📋 Registros de Pacientes")
-        
-        display_cols = ['timestamp', 'id_paciente_formatted', 'nombre_paciente', 
-                       'presion_arterial', 'temperatura', 'oximetria', 'estado']
-        
-        display_data = data[display_cols].copy()
-        display_data['Seleccionar'] = False
-        display_data['timestamp'] = display_data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
-        
-        table_height = CONFIG.HEADER_HEIGHT + (len(display_data) * CONFIG.ROW_HEIGHT)
-        
-        edited_df = st.data_editor(
-            display_data,
-            column_config={
-                "timestamp": "Fecha/Hora",
-                "id_paciente_formatted": st.column_config.Column(
-                    "Teléfono",
-                    help="Número de celular del paciente (formato: XX-XXXX-XXXX)",
-                    width="medium"
-                ),
-                "nombre_paciente": "Nombre",
-                "presion_arterial": "Presión (mmHg)",
-                "temperatura": "Temp. (°C)",
-                "oximetria": "Oximetría (%)",
-                "estado": st.column_config.Column(
-                    "Estado",
-                    help="Estado del registro del paciente",
-                    width="small"
-                ),
-                "Seleccionar": st.column_config.CheckboxColumn(
-                    "Ver ECG",
-                    help="Seleccione para ver los ECGs del paciente",
-                    width="small"
-                )
-            },
-            hide_index=True,
-            use_container_width=True,
-            height=table_height,
-            disabled=["timestamp", "id_paciente_formatted", "nombre_paciente", 
-                     "presion_arterial", "temperatura", "oximetria", "estado"],
-            key="patients_table"
-        )
-
-        selected_rows = edited_df[edited_df['Seleccionar']]
-        if not selected_rows.empty:
-            selected_row = selected_rows.iloc[0]
-            # Obtener el ID limpio (sin formato) para búsqueda
-            selected_ecg_patient = ''.join(filter(str.isdigit, selected_row['id_paciente_formatted']))
-            
-            st.markdown("---")
-            st.subheader(f"📄 ECGs del Paciente: {selected_ecg_patient}")
-            st.markdown(f"**Estado actual:** {selected_row['estado']}")
-            
-            with st.spinner(f"Buscando ECGs para paciente {selected_ecg_patient}..."):
-                ecg_list = SSHManager.get_all_ecgs(selected_ecg_patient)
-                display_ecg_table(ecg_list)
-
-    except Exception as e:
-        st.error(f"Error inesperado: {str(e)}")
-        logger.error(f"Error en main(): {str(e)}", exc_info=True)
+        if ecg_list := SSHManager.get_all_ecgs(patient_id):
+            display_ecg_table(ecg_list)
 
 if __name__ == "__main__":
     main()
