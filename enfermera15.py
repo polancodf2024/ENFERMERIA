@@ -147,6 +147,79 @@ class SSHManager:
         finally:
             ssh.close()
 
+def analyze_vital_signs(df):
+    """Analiza variaciones en signos vitales por paciente"""
+    # Convertir a numéricos y limpiar datos
+    df['temperatura'] = pd.to_numeric(df['temperatura'], errors='coerce')
+    df['oximetria'] = pd.to_numeric(df['oximetria'], errors='coerce')
+
+    # Limpiar presión arterial (ejemplo: "120/80" -> calcular media)
+    def clean_pressure(pressure):
+        if isinstance(pressure, str) and '/' in pressure:
+            try:
+                systolic, diastolic = map(float, pressure.split('/'))
+                return (systolic + diastolic) / 2
+            except:
+                return None
+        return pd.to_numeric(pressure, errors='coerce')
+
+    df['presion_media'] = df['presion_arterial'].apply(clean_pressure)
+
+    # Ordenar el DataFrame completo por paciente y timestamp primero
+    df_sorted = df.sort_values(['id_paciente', 'timestamp'], ascending=True)
+
+    # Calcular variaciones porcentuales
+    variations = []
+    
+    # Iterar por cada paciente
+    for patient_id in df_sorted['id_paciente'].unique():
+        patient_data = df_sorted[df_sorted['id_paciente'] == patient_id]
+        
+        if len(patient_data) < 2:
+            continue
+
+        # Calcular cambios porcentuales entre mediciones consecutivas
+        for i in range(1, len(patient_data)):
+            prev_row = patient_data.iloc[i-1]
+            curr_row = patient_data.iloc[i]
+
+            altered_signs = []
+
+            # Verificar temperatura (T:)
+            if not pd.isna(prev_row['temperatura']) and not pd.isna(curr_row['temperatura']):
+                temp_change = abs(curr_row['temperatura'] - prev_row['temperatura']) / prev_row['temperatura'] * 100
+                if temp_change >= 3:
+                    altered_signs.append(f"T: +{temp_change:.1f}%")
+
+            # Verificar oximetría (O:)
+            if not pd.isna(prev_row['oximetria']) and not pd.isna(curr_row['oximetria']):
+                oxi_change = abs(curr_row['oximetria'] - prev_row['oximetria']) / prev_row['oximetria'] * 100
+                if oxi_change >= 3:
+                    altered_signs.append(f"O: +{oxi_change:.1f}%")
+
+            # Verificar presión arterial (P:)
+            if not pd.isna(prev_row['presion_media']) and not pd.isna(curr_row['presion_media']):
+                pres_change = abs(curr_row['presion_media'] - prev_row['presion_media']) / prev_row['presion_media'] * 100
+                if pres_change >= 3:
+                    altered_signs.append(f"P: +{pres_change:.1f}%")
+
+            if altered_signs:
+                variations.append({
+                    'id_paciente': patient_id,
+                    'timestamp': curr_row['timestamp'],
+                    'signos_alterados': ', '.join(altered_signs)
+                })
+
+    # Crear DataFrame con las variaciones
+    if variations:
+        variations_df = pd.DataFrame(variations)
+        # Unir con el DataFrame original
+        df = pd.merge(df, variations_df, on=['id_paciente', 'timestamp'], how='left')
+    else:
+        df['signos_alterados'] = None
+
+    return df
+
 def load_data():
     """Carga datos del CSV"""
     remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
@@ -162,6 +235,10 @@ def load_data():
             # Crear columna formateada
             df['id_paciente_formatted'] = df['id_paciente'].apply(format_phone_number)
             df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
+            
+            # Analizar variaciones en signos vitales
+            df = analyze_vital_signs(df)
+            
             return df.dropna(subset=['timestamp']).sort_values('timestamp', ascending=False)
         except Exception as e:
             st.error(f"Error al leer CSV: {str(e)}")
@@ -226,11 +303,15 @@ def main():
         timestamp=data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
     )
 
+    # Columnas a mostrar (añadimos 'signos_alterados')
+    columns_to_show = [
+        'timestamp', 'id_paciente_formatted', 'nombre_paciente',
+        'presion_arterial', 'temperatura', 'oximetria', 'estado', 
+        'signos_alterados', 'Seleccionar'
+    ]
+
     edited_df = st.data_editor(
-        display_data[[
-            'timestamp', 'id_paciente_formatted', 'nombre_paciente',
-            'presion_arterial', 'temperatura', 'oximetria', 'estado', 'Seleccionar'
-        ]],
+        display_data[columns_to_show],
         column_config={
             "timestamp": "Fecha/Hora",
             "id_paciente_formatted": "Teléfono",
@@ -239,11 +320,12 @@ def main():
             "temperatura": "Temp. (°C)",
             "oximetria": "Oximetría (%)",
             "estado": "Estado",
+            "signos_alterados": "Variación",
             "Seleccionar": st.column_config.CheckboxColumn("Ver ECG")
         },
         hide_index=True,
         disabled=["timestamp", "id_paciente_formatted", "nombre_paciente",
-                 "presion_arterial", "temperatura", "oximetria", "estado"]
+                 "presion_arterial", "temperatura", "oximetria", "estado", "signos_alterados"]
     )
 
     # Mostrar ECGs seleccionados
