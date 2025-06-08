@@ -112,7 +112,7 @@ class SSHManager:
 
     @staticmethod
     def append_to_remote_csv(data):
-        """Añade un registro al CSV remoto"""
+        """Añade un registro al CSV remoto con el campo correo=0"""
         ssh = SSHManager.get_connection()
         if not ssh:
             logging.error("No se pudo establecer conexión SSH")
@@ -121,7 +121,7 @@ class SSHManager:
         try:
             remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
             
-            # Crear una línea CSV del registro
+            # Crear una línea CSV del registro (incluyendo correo=0)
             csv_line = (
                 f"{data['timestamp']},"
                 f"{data['id_paciente']},"
@@ -129,7 +129,8 @@ class SSHManager:
                 f"{data['presion_arterial']},"
                 f"{data['temperatura']},"
                 f"{data['oximetria']},"
-                f"{data['estado']}\n"
+                f"{data['estado']},"
+                f"0\n"  # Campo correo siempre con valor 0
             )
             
             # Verificar si el archivo existe remotamente
@@ -145,10 +146,10 @@ class SSHManager:
                 with sftp.file(remote_csv_path, 'a') as remote_file:
                     remote_file.write(csv_line)
             else:
-                # Si no existe, crear el archivo con cabeceras
+                # Si no existe, crear el archivo con cabeceras (incluyendo correo)
                 header = (
                     "timestamp,id_paciente,nombre_paciente,"
-                    "presion_arterial,temperatura,oximetria,estado\n"
+                    "presion_arterial,temperatura,oximetria,estado,correo\n"
                 )
                 with sftp.file(remote_csv_path, 'w') as remote_file:
                     remote_file.write(header)
@@ -191,7 +192,7 @@ def save_record(data, ecg_file=None):
         else:
             data['estado'] = 'N'  # Sin ECG
 
-        # 2. Añadir registro al CSV remoto
+        # 2. Añadir registro al CSV remoto (incluirá correo=0 automáticamente)
         if SSHManager.append_to_remote_csv(data):
             st.success("✅ Registro guardado correctamente en el servidor remoto")
             return True
@@ -204,7 +205,7 @@ def save_record(data, ecg_file=None):
         st.error(f"❌ Error inesperado al guardar el registro: {str(e)}")
         return False
 
-# Interfaz de usuario (main() permanece igual)
+# Interfaz de usuario
 def main():
     st.set_page_config(
         page_title="Registro de Signos Vitales",
