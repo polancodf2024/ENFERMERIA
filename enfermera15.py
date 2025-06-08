@@ -9,6 +9,13 @@ import tempfile
 import paramiko
 import time
 import base64
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
+import io
 
 # Configuración de logging
 logging.basicConfig(
@@ -39,6 +46,14 @@ class Config:
                 'DIR': st.secrets["remote_dir"],
                 'ECG_DIR': st.secrets["ecg_folder"]
             }
+            
+            # Configuración de correo
+            self.SMTP_SERVER = st.secrets["smtp_server"]
+            self.SMTP_PORT = st.secrets["smtp_port"]
+            self.EMAIL_USER = st.secrets["email_user"]
+            self.EMAIL_PASSWORD = st.secrets["email_password"]
+            self.NOTIFICATION_EMAIL = st.secrets["notification_email"]
+            
         except Exception as e:
             logger.error(f"Error al cargar configuración: {str(e)}")
             raise
@@ -59,6 +74,48 @@ def format_phone_number(phone):
         return phone
     cleaned = ''.join(filter(str.isdigit, phone))
     return f"{cleaned[:2]}-{cleaned[2:6]}-{cleaned[6:]}"
+
+# Función para enviar correos con datos del registro
+def send_variation_email(patient_id, all_patient_data):
+    """Envía un correo con todos los registros del paciente cuando se detectan variaciones"""
+    try:
+        mensaje = MIMEMultipart()
+        mensaje['From'] = CONFIG.EMAIL_USER
+        mensaje['To'] = CONFIG.NOTIFICATION_EMAIL
+        mensaje['Subject'] = f"Variación en signos vitales - Paciente {patient_id}"
+        
+        # Crear cuerpo del mensaje
+        body = f"""
+        Se ha detectado una variación significativa en los signos vitales del paciente {patient_id}.
+        
+        Adjunto encontrará todos los registros de este paciente.
+        """
+        
+        mensaje.attach(MIMEText(body, 'plain'))
+        
+        # Crear archivo CSV con todos los registros del paciente
+        csv_buffer = io.StringIO()
+        all_patient_data.to_csv(csv_buffer, index=False)
+        csv_buffer.seek(0)
+        
+        # Adjuntar el CSV
+        part = MIMEBase('application', 'octet-stream')
+        part.set_payload(csv_buffer.getvalue().encode('utf-8'))
+        encoders.encode_base64(part)
+        part.add_header('Content-Disposition', f'attachment; filename="registros_paciente_{patient_id}.csv"')
+        mensaje.attach(part)
+        
+        context = ssl.create_default_context()
+        with smtplib.SMTP(CONFIG.SMTP_SERVER, CONFIG.SMTP_PORT) as server:
+            server.starttls(context=context)
+            server.login(CONFIG.EMAIL_USER, CONFIG.EMAIL_PASSWORD)
+            server.sendmail(CONFIG.EMAIL_USER, CONFIG.NOTIFICATION_EMAIL, mensaje.as_string())
+            
+        logger.info(f"Correo enviado por variación en paciente {patient_id} con {len(all_patient_data)} registros")
+        
+    except Exception as e:
+        logger.error(f"Error al enviar correo: {str(e)}")
+        st.error("Error al enviar notificación por correo")
 
 class SSHManager:
     MAX_RETRIES = 3
@@ -215,6 +272,11 @@ def analyze_vital_signs(df):
         variations_df = pd.DataFrame(variations)
         # Unir con el DataFrame original
         df = pd.merge(df, variations_df, on=['id_paciente', 'timestamp'], how='left')
+        
+        # Enviar correo con todos los registros del paciente cuando se detecta variación
+        for patient_id in variations_df['id_paciente'].unique():
+            all_patient_data = df[df['id_paciente'] == patient_id].sort_values('timestamp', ascending=False)
+            send_variation_email(patient_id, all_patient_data)
     else:
         df['signos_alterados'] = None
 
