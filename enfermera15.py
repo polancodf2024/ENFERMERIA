@@ -60,8 +60,8 @@ class Config:
 
 CONFIG = Config()
 
-# Diccionario global para llevar registro de los correos enviados por paciente
-email_count = {}
+# Conjunto global para llevar registro de los pacientes que ya han recibido notificación
+notified_patients = set()
 
 # Funciones auxiliares
 def validate_phone_number(phone):
@@ -81,11 +81,11 @@ def format_phone_number(phone):
 # Función para enviar correos con datos del registro
 def send_variation_email(patient_id, all_patient_data):
     """Envía un correo con todos los registros del paciente cuando se detectan variaciones"""
-    global email_count
+    global notified_patients
     
-    # Verificar si ya se han enviado 2 correos para este paciente
-    if patient_id in email_count and email_count[patient_id] >= 2:
-        logger.info(f"Ya se han enviado 2 correos para el paciente {patient_id}. No se enviará otro.")
+    # Verificar si ya se ha enviado un correo para este paciente
+    if patient_id in notified_patients:
+        logger.info(f"Ya se ha enviado un correo para el paciente {patient_id}. No se enviará otro.")
         return
     
     try:
@@ -121,13 +121,10 @@ def send_variation_email(patient_id, all_patient_data):
             server.login(CONFIG.EMAIL_USER, CONFIG.EMAIL_PASSWORD)
             server.sendmail(CONFIG.EMAIL_USER, CONFIG.NOTIFICATION_EMAIL, mensaje.as_string())
             
-        # Actualizar el contador de correos para este paciente
-        if patient_id in email_count:
-            email_count[patient_id] += 1
-        else:
-            email_count[patient_id] = 1
+        # Marcar al paciente como notificado
+        notified_patients.add(patient_id)
             
-        logger.info(f"Correo enviado por variación en paciente {patient_id} (envío #{email_count[patient_id]}) con {len(all_patient_data)} registros")
+        logger.info(f"Correo enviado por variación en paciente {patient_id} con {len(all_patient_data)} registros")
         
     except Exception as e:
         logger.error(f"Error al enviar correo: {str(e)}")
