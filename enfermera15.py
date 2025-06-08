@@ -60,9 +60,6 @@ class Config:
 
 CONFIG = Config()
 
-# Diccionario global para llevar registro de los correos enviados por paciente
-email_count = {}
-
 # Funciones auxiliares
 def validate_phone_number(phone):
     """Valida que el número tenga 10 dígitos"""
@@ -78,14 +75,61 @@ def format_phone_number(phone):
     cleaned = ''.join(filter(str.isdigit, phone))
     return f"{cleaned[:2]}-{cleaned[2:6]}-{cleaned[6:]}"
 
-# Función para enviar correos con datos del registro
-def send_variation_email(patient_id, all_patient_data):
+def clean_pressure(pressure):
+    """Limpia y separa la presión arterial"""
+    if isinstance(pressure, str) and '/' in pressure:
+        try:
+            systolic, diastolic = map(float, pressure.split('/'))
+            return {'systolic': systolic, 'diastolic': diastolic}
+        except:
+            return None
+    return None
+
+def update_csv_flag(patient_id, df):
+    """Actualiza el flag 'correo' a 1 en TODOS los registros del paciente"""
+    try:
+        # Crear DataFrame temporal solo con columnas originales
+        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
+                          'presion_arterial', 'temperatura', 'oximetria', 
+                          'estado', 'correo']
+        df_to_save = df[original_columns].copy()
+        
+        # Marcar el flag 'correo' como 1 para TODOS los registros de este paciente
+        df_to_save.loc[df_to_save['id_paciente'] == patient_id, 'correo'] = 1
+        
+        # Guardar el archivo temporalmente
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False, mode='w') as tmp_file:
+            df_to_save.to_csv(tmp_file.name, index=False)
+            tmp_file_path = tmp_file.name
+        
+        # Subir el archivo actualizado al servidor remoto
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        ssh.connect(
+            hostname=CONFIG.REMOTE['HOST'],
+            port=CONFIG.REMOTE['PORT'],
+            username=CONFIG.REMOTE['USER'],
+            password=CONFIG.REMOTE['PASSWORD'],
+            timeout=CONFIG.TIMEOUT
+        )
+        
+        with ssh.open_sftp() as sftp:
+            sftp.put(tmp_file_path, f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}")
+        
+        ssh.close()
+        os.unlink(tmp_file_path)
+        return True
+    except Exception as e:
+        logger.error(f"Error al actualizar flag de correo: {str(e)}")
+        return False
+
+def send_variation_email(patient_id, all_patient_data, df):
     """Envía un correo con todos los registros del paciente cuando se detectan variaciones"""
-    global email_count
+    # Verificar si el campo 'correo' es 0 para este registro
+    current_record = df[(df['id_paciente'] == patient_id) & (df['timestamp'] == all_patient_data.iloc[0]['timestamp'])]
     
-    # Verificar si ya se han enviado 2 correos para este paciente
-    if patient_id in email_count and email_count[patient_id] >= 2:
-        logger.info(f"Ya se han enviado 2 correos para el paciente {patient_id}. No se enviará otro.")
+    if not current_record.empty and current_record.iloc[0]['correo'] == 1:
+        logger.info(f"Ya se envió un correo para este paciente {patient_id}. No se enviará otro.")
         return
     
     try:
@@ -103,9 +147,14 @@ def send_variation_email(patient_id, all_patient_data):
         
         mensaje.attach(MIMEText(body, 'plain'))
         
-        # Crear archivo CSV con todos los registros del paciente
+        # Crear archivo CSV con todos los registros del paciente (solo columnas originales)
+        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
+                          'presion_arterial', 'temperatura', 'oximetria', 
+                          'estado', 'correo']
+        patient_data_to_send = all_patient_data[original_columns].copy()
+        
         csv_buffer = io.StringIO()
-        all_patient_data.to_csv(csv_buffer, index=False)
+        patient_data_to_send.to_csv(csv_buffer, index=False)
         csv_buffer.seek(0)
         
         # Adjuntar el CSV
@@ -121,17 +170,17 @@ def send_variation_email(patient_id, all_patient_data):
             server.login(CONFIG.EMAIL_USER, CONFIG.EMAIL_PASSWORD)
             server.sendmail(CONFIG.EMAIL_USER, CONFIG.NOTIFICATION_EMAIL, mensaje.as_string())
             
-        # Actualizar el contador de correos para este paciente
-        if patient_id in email_count:
-            email_count[patient_id] += 1
+        # Actualizar el flag en el CSV para TODOS los registros del paciente
+        if update_csv_flag(patient_id, df):
+            logger.info(f"Correo enviado por variación en paciente {patient_id} y flags actualizados en todos sus registros")
         else:
-            email_count[patient_id] = 1
-            
-        logger.info(f"Correo enviado por variación en paciente {patient_id} (envío #{email_count[patient_id]}) con {len(all_patient_data)} registros")
+            logger.error(f"Correo enviado pero no se pudieron actualizar los flags para el paciente {patient_id}")
         
     except Exception as e:
         logger.error(f"Error al enviar correo: {str(e)}")
         st.error("Error al enviar notificación por correo")
+
+# [El resto del código permanece exactamente igual, incluyendo las clases SSHManager y las demás funciones]
 
 class SSHManager:
     MAX_RETRIES = 3
@@ -221,27 +270,13 @@ class SSHManager:
             ssh.close()
 
 def analyze_vital_signs(df):
-    """Analiza variaciones en signos vitales por paciente"""
+    """Analiza variaciones en signos vitales por paciente con umbrales sensibles"""
     # Convertir a numéricos y limpiar datos
     df['temperatura'] = pd.to_numeric(df['temperatura'], errors='coerce')
     df['oximetria'] = pd.to_numeric(df['oximetria'], errors='coerce')
 
-    # Limpiar presión arterial (ejemplo: "120/80" -> calcular media)
-    def clean_pressure(pressure):
-        if isinstance(pressure, str) and '/' in pressure:
-            try:
-                systolic, diastolic = map(float, pressure.split('/'))
-                return (systolic + diastolic) / 2
-            except:
-                return None
-        return pd.to_numeric(pressure, errors='coerce')
-
-    df['presion_media'] = df['presion_arterial'].apply(clean_pressure)
-
-    # Ordenar el DataFrame completo por paciente y timestamp primero
+    # Ordenar el DataFrame completo por paciente y timestamp
     df_sorted = df.sort_values(['id_paciente', 'timestamp'], ascending=True)
-
-    # Calcular variaciones porcentuales
     variations = []
     
     # Iterar por cada paciente
@@ -251,30 +286,40 @@ def analyze_vital_signs(df):
         if len(patient_data) < 2:
             continue
 
-        # Calcular cambios porcentuales entre mediciones consecutivas
+        # Comparar cada registro con el anterior
         for i in range(1, len(patient_data)):
             prev_row = patient_data.iloc[i-1]
             curr_row = patient_data.iloc[i]
-
             altered_signs = []
 
-            # Verificar temperatura (T:)
+            # Temperatura (cambio ≥ 0.5°C)
             if not pd.isna(prev_row['temperatura']) and not pd.isna(curr_row['temperatura']):
-                temp_change = abs(curr_row['temperatura'] - prev_row['temperatura']) / prev_row['temperatura'] * 100
-                if temp_change >= 3:
-                    altered_signs.append(f"T: +{temp_change:.1f}%")
+                temp_change = abs(curr_row['temperatura'] - prev_row['temperatura'])
+                if temp_change >= 0.5:
+                    direction = "+" if curr_row['temperatura'] > prev_row['temperatura'] else "-"
+                    altered_signs.append(f"T: {direction}{temp_change:.1f}°C")
 
-            # Verificar oximetría (O:)
+            # Oximetría (cambio ≥ 2%)
             if not pd.isna(prev_row['oximetria']) and not pd.isna(curr_row['oximetria']):
-                oxi_change = abs(curr_row['oximetria'] - prev_row['oximetria']) / prev_row['oximetria'] * 100
-                if oxi_change >= 3:
-                    altered_signs.append(f"O: +{oxi_change:.1f}%")
+                oxi_change = abs(curr_row['oximetria'] - prev_row['oximetria'])
+                if oxi_change >= 2:
+                    direction = "+" if curr_row['oximetria'] > prev_row['oximetria'] else "-"
+                    altered_signs.append(f"O: {direction}{oxi_change:.1f}%")
 
-            # Verificar presión arterial (P:)
-            if not pd.isna(prev_row['presion_media']) and not pd.isna(curr_row['presion_media']):
-                pres_change = abs(curr_row['presion_media'] - prev_row['presion_media']) / prev_row['presion_media'] * 100
-                if pres_change >= 3:
-                    altered_signs.append(f"P: +{pres_change:.1f}%")
+            # Presión arterial (cualquier cambio en sistólica o diastólica)
+            prev_pressure = clean_pressure(prev_row['presion_arterial'])
+            curr_pressure = clean_pressure(curr_row['presion_arterial'])
+            
+            if prev_pressure and curr_pressure:
+                sys_diff = curr_pressure['systolic'] - prev_pressure['systolic']
+                dia_diff = curr_pressure['diastolic'] - prev_pressure['diastolic']
+                
+                if sys_diff != 0:
+                    direction = "+" if sys_diff > 0 else "-"
+                    altered_signs.append(f"Ps: {direction}{abs(sys_diff):.0f}")
+                if dia_diff != 0:
+                    direction = "+" if dia_diff > 0 else "-"
+                    altered_signs.append(f"Pd: {direction}{abs(dia_diff):.0f}")
 
             if altered_signs:
                 variations.append({
@@ -292,7 +337,7 @@ def analyze_vital_signs(df):
         # Enviar correo con todos los registros del paciente cuando se detecta variación
         for patient_id in variations_df['id_paciente'].unique():
             all_patient_data = df[df['id_paciente'] == patient_id].sort_values('timestamp', ascending=False)
-            send_variation_email(patient_id, all_patient_data)
+            send_variation_email(patient_id, all_patient_data, df)
     else:
         df['signos_alterados'] = None
 
@@ -308,9 +353,14 @@ def load_data():
 
         try:
             df = pd.read_csv(tmp_file.name)
+            
+            # Asegurar que la columna 'correo' existe (0 por defecto)
+            if 'correo' not in df.columns:
+                df['correo'] = 0
+            
             # Extraer solo dígitos del ID
             df['id_paciente'] = df['id_paciente'].astype(str).str.extract(r'(\d+)')[0].str[:10]
-            # Crear columna formateada
+            # Crear columna formateada (solo para visualización)
             df['id_paciente_formatted'] = df['id_paciente'].apply(format_phone_number)
             df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
             
