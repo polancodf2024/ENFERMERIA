@@ -60,6 +60,9 @@ class Config:
 
 CONFIG = Config()
 
+# Diccionario global para llevar registro de los correos enviados por paciente
+email_count = {}
+
 # Funciones auxiliares
 def validate_phone_number(phone):
     """Valida que el número tenga 10 dígitos"""
@@ -78,6 +81,13 @@ def format_phone_number(phone):
 # Función para enviar correos con datos del registro
 def send_variation_email(patient_id, all_patient_data):
     """Envía un correo con todos los registros del paciente cuando se detectan variaciones"""
+    global email_count
+    
+    # Verificar si ya se han enviado 2 correos para este paciente
+    if patient_id in email_count and email_count[patient_id] >= 2:
+        logger.info(f"Ya se han enviado 2 correos para el paciente {patient_id}. No se enviará otro.")
+        return
+    
     try:
         mensaje = MIMEMultipart()
         mensaje['From'] = CONFIG.EMAIL_USER
@@ -111,7 +121,13 @@ def send_variation_email(patient_id, all_patient_data):
             server.login(CONFIG.EMAIL_USER, CONFIG.EMAIL_PASSWORD)
             server.sendmail(CONFIG.EMAIL_USER, CONFIG.NOTIFICATION_EMAIL, mensaje.as_string())
             
-        logger.info(f"Correo enviado por variación en paciente {patient_id} con {len(all_patient_data)} registros")
+        # Actualizar el contador de correos para este paciente
+        if patient_id in email_count:
+            email_count[patient_id] += 1
+        else:
+            email_count[patient_id] = 1
+            
+        logger.info(f"Correo enviado por variación en paciente {patient_id} (envío #{email_count[patient_id]}) con {len(all_patient_data)} registros")
         
     except Exception as e:
         logger.error(f"Error al enviar correo: {str(e)}")
