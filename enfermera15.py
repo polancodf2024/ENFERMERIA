@@ -88,8 +88,8 @@ def clean_pressure(pressure):
 def update_csv_flag(patient_id, df):
     """Actualiza el flag 'correo' a 1 en TODOS los registros del paciente"""
     try:
-        # Crear DataFrame temporal solo con columnas originales
-        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
+        # Crear DataFrame temporal con todas las columnas incluyendo numero_economico
+        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 'numero_economico',
                           'presion_arterial', 'temperatura', 'oximetria', 
                           'estado', 'correo']
         df_to_save = df[original_columns].copy()
@@ -147,8 +147,8 @@ def send_variation_email(patient_id, all_patient_data, df):
         
         mensaje.attach(MIMEText(body, 'plain'))
         
-        # Crear archivo CSV con todos los registros del paciente (solo columnas originales)
-        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 
+        # Crear archivo CSV con todos los registros del paciente (incluyendo numero_economico)
+        original_columns = ['timestamp', 'id_paciente', 'nombre_paciente', 'numero_economico',
                           'presion_arterial', 'temperatura', 'oximetria', 
                           'estado', 'correo']
         patient_data_to_send = all_patient_data[original_columns].copy()
@@ -179,8 +179,6 @@ def send_variation_email(patient_id, all_patient_data, df):
     except Exception as e:
         logger.error(f"Error al enviar correo: {str(e)}")
         st.error("Error al enviar notificación por correo")
-
-# [El resto del código permanece exactamente igual, incluyendo las clases SSHManager y las demás funciones]
 
 class SSHManager:
     MAX_RETRIES = 3
@@ -354,9 +352,11 @@ def load_data():
         try:
             df = pd.read_csv(tmp_file.name)
             
-            # Asegurar que la columna 'correo' existe (0 por defecto)
+            # Asegurar que las columnas necesarias existen
             if 'correo' not in df.columns:
                 df['correo'] = 0
+            if 'numero_economico' not in df.columns:
+                df['numero_economico'] = ''
             
             # Extraer solo dígitos del ID
             df['id_paciente'] = df['id_paciente'].astype(str).str.extract(r'(\d+)')[0].str[:10]
@@ -431,9 +431,9 @@ def main():
         timestamp=data['timestamp'].dt.strftime("%Y-%m-%d %H:%M:%S")
     )
 
-    # Columnas a mostrar (añadimos 'signos_alterados')
+    # Columnas a mostrar (incluyendo numero_economico y signos_alterados)
     columns_to_show = [
-        'timestamp', 'id_paciente_formatted', 'nombre_paciente',
+        'timestamp', 'id_paciente_formatted', 'nombre_paciente', 'numero_economico',
         'presion_arterial', 'temperatura', 'oximetria', 'estado', 
         'signos_alterados', 'Seleccionar'
     ]
@@ -444,6 +444,7 @@ def main():
             "timestamp": "Fecha/Hora",
             "id_paciente_formatted": "Teléfono",
             "nombre_paciente": "Nombre",
+            "numero_economico": "Núm. Económico",
             "presion_arterial": "Presión (mmHg)",
             "temperatura": "Temp. (°C)",
             "oximetria": "Oximetría (%)",
@@ -452,7 +453,7 @@ def main():
             "Seleccionar": st.column_config.CheckboxColumn("Ver ECG")
         },
         hide_index=True,
-        disabled=["timestamp", "id_paciente_formatted", "nombre_paciente",
+        disabled=["timestamp", "id_paciente_formatted", "nombre_paciente", "numero_economico",
                  "presion_arterial", "temperatura", "oximetria", "estado", "signos_alterados"]
     )
 

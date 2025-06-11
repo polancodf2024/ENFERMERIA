@@ -121,11 +121,12 @@ class SSHManager:
         try:
             remote_csv_path = f"{CONFIG.REMOTE['DIR']}/{CONFIG.CSV_FILENAME}"
             
-            # Crear una línea CSV del registro (incluyendo correo=0)
+            # Crear una línea CSV del registro (incluyendo número económico y correo=0)
             csv_line = (
                 f"{data['timestamp']},"
                 f"{data['id_paciente']},"
                 f"\"{data['nombre_paciente']}\","
+                f"\"{data['numero_economico']}\","
                 f"{data['presion_arterial']},"
                 f"{data['temperatura']},"
                 f"{data['oximetria']},"
@@ -146,9 +147,9 @@ class SSHManager:
                 with sftp.file(remote_csv_path, 'a') as remote_file:
                     remote_file.write(csv_line)
             else:
-                # Si no existe, crear el archivo con cabeceras (incluyendo correo)
+                # Si no existe, crear el archivo con cabeceras (incluyendo número económico y correo)
                 header = (
-                    "timestamp,id_paciente,nombre_paciente,"
+                    "timestamp,id_paciente,nombre_paciente,numero_economico,"
                     "presion_arterial,temperatura,oximetria,estado,correo\n"
                 )
                 with sftp.file(remote_csv_path, 'w') as remote_file:
@@ -192,7 +193,7 @@ def save_record(data, ecg_file=None):
         else:
             data['estado'] = 'N'  # Sin ECG
 
-        # 2. Añadir registro al CSV remoto (incluirá correo=0 automáticamente)
+        # 2. Añadir registro al CSV remoto (incluirá número económico y correo=0 automáticamente)
         if SSHManager.append_to_remote_csv(data):
             st.success("✅ Registro guardado correctamente en el servidor remoto")
             return True
@@ -227,6 +228,7 @@ def main():
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         id_paciente = st.text_input("📱 Número de celular (10 dígitos):", max_chars=10)
         nombre_paciente = st.text_input("👤 Nombre completo del paciente:")
+        numero_economico = st.text_input("🏥 Número económico:", placeholder="Ej: NE-001, ECO-123")
         
         col1, col2, col3 = st.columns(3)
         with col1:
@@ -244,13 +246,14 @@ def main():
             # Validaciones
             if not id_paciente.isdigit() or len(id_paciente) != 10:
                 st.error("❌ El ID debe ser un número de celular de 10 dígitos")
-            elif not all([nombre_paciente, presion_arterial, temperatura, oximetria]):
+            elif not all([nombre_paciente, numero_economico, presion_arterial, temperatura, oximetria]):
                 st.error("❌ Complete todos los campos obligatorios")
             else:
                 data = {
                     'timestamp': timestamp,
                     'id_paciente': id_paciente,
                     'nombre_paciente': nombre_paciente.strip(),
+                    'numero_economico': numero_economico.strip(),
                     'presion_arterial': presion_arterial.strip(),
                     'temperatura': temperatura.strip(),
                     'oximetria': oximetria.strip()
