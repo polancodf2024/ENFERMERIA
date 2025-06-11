@@ -438,13 +438,17 @@ def main():
         'signos_alterados', 'Seleccionar'
     ]
 
+    # Asegurarse de que el campo numero_economico existe
+    if 'numero_economico' not in display_data.columns:
+        display_data['numero_economico'] = ''
+
     edited_df = st.data_editor(
         display_data[columns_to_show],
         column_config={
             "timestamp": "Fecha/Hora",
             "id_paciente_formatted": "Teléfono",
             "nombre_paciente": "Nombre",
-            "numero_economico": "Núm. Económico",
+            "numero_economico": st.column_config.TextColumn("Núm. Económico"),
             "presion_arterial": "Presión (mmHg)",
             "temperatura": "Temp. (°C)",
             "oximetria": "Oximetría (%)",
