@@ -8,6 +8,10 @@ import os
 import logging
 from PIL import Image
 import io
+import streamlit as st
+st.set_option('server.enableCORS', False)
+st.set_option('server.enableXsrfProtection', False)
+st.set_option('server.fileWatcherType', 'none')  # Desactiva el watcher
 
 # Configuración de logging
 logging.basicConfig(
