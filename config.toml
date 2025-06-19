@@ -1,14 +1,4 @@
 [server]
-headless = true
-port = 8501
-enableCORS = true
-enableXsrfProtection = true
-
-
-[theme]
-primaryColor = "#4CAF50"
-backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F0F0F5"
-textColor = "#000000"
-font = "sans serif"
-
+fileWatcherType = "none"
+enableCORS = false
+enableXsrfProtection = false
