@@ -16,7 +16,7 @@ def initialize_session_state():
                     {"id": str(uuid.uuid4()), "tipo": "paciente", "nombre": "Pas: María Gómez", "diagnostico": "Arritmia ventricular", "estado": "observación", "color": "#ff9800"}
                 ],
                 "enfermeras": [
-                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Laura Díaz", "rol": "Cardiología", "color": "#9c27b0"}
+                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Laura Díaz", "rol": "Especialista", "color": "#9c27b0"}
                 ]
             },
             "Habitación 102": {
@@ -25,8 +25,8 @@ def initialize_session_state():
                     {"id": str(uuid.uuid4()), "tipo": "paciente", "nombre": "Pas: Ana López", "diagnostico": "Insuficiencia cardíaca", "estado": "estable", "color": "#4caf50"}
                 ],
                 "enfermeras": [
-                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Pedro Sánchez", "rol": "UCI", "color": "#2196f3"},
-                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Sofía Martínez", "rol": "Cardiología", "color": "#9c27b0"}
+                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Pedro Sánchez", "rol": "General A", "color": "#2196f3"},
+                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Sofía Martínez", "rol": "Especialista", "color": "#9c27b0"}
                 ]
             },
             "Habitación 103": {
@@ -44,7 +44,7 @@ def initialize_session_state():
                     {"id": str(uuid.uuid4()), "tipo": "paciente", "nombre": "Pas: Pedro Sánchez", "diagnostico": "Postoperatorio bypass", "estado": "alta pendiente", "color": "#9c27b0"}
                 ],
                 "enfermeras": [
-                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Miguel Ángel", "rol": "Postoperatorio", "color": "#ff9800"}
+                    {"id": str(uuid.uuid4()), "tipo": "enfermera", "nombre": "Enf: Miguel Ángel", "rol": "General B", "color": "#ff9800"}
                 ]
             }
         }
@@ -65,7 +65,7 @@ def initialize_session_state():
         st.session_state.nuevo_diagnostico = "Diagnóstico por definir"
     
     if 'nuevo_rol' not in st.session_state:
-        st.session_state.nuevo_rol = "General"
+        st.session_state.nuevo_rol = "General A"
     
     if 'mostrar_modal' not in st.session_state:
         st.session_state.mostrar_modal = False
@@ -246,18 +246,33 @@ def agregar_persona():
     """Agrega un nuevo paciente o enfermera según el formulario"""
     if st.session_state.nuevo_nombre.strip():
         nuevo_id = str(uuid.uuid4())
-        nuevo_item = {
-            "id": nuevo_id,
-            "tipo": st.session_state.tipo_nuevo,
-            "nombre": f"{'Pas' if st.session_state.tipo_nuevo == 'paciente' else 'Enf'}: {st.session_state.nuevo_nombre}",
-            "color": "#4caf50" if st.session_state.tipo_nuevo == "paciente" else "#9c27b0"
-        }
         
         if st.session_state.tipo_nuevo == "paciente":
-            nuevo_item["diagnostico"] = st.session_state.nuevo_diagnostico
-            nuevo_item["estado"] = "estable"
+            nuevo_item = {
+                "id": nuevo_id,
+                "tipo": "paciente",
+                "nombre": f"Pas: {st.session_state.nuevo_nombre}",
+                "diagnostico": st.session_state.nuevo_diagnostico,
+                "estado": "estable",
+                "color": "#4caf50"
+            }
         else:
-            nuevo_item["rol"] = st.session_state.nuevo_rol
+            # Asignar color según el rol de la enfermera
+            colores_roles = {
+                "Especialista": "#9c27b0",
+                "General A": "#2196f3",
+                "General B": "#ff9800",
+                "General C": "#4caf50",
+                "Camillero": "#607d8b"
+            }
+            
+            nuevo_item = {
+                "id": nuevo_id,
+                "tipo": "enfermera",
+                "nombre": f"Enf: {st.session_state.nuevo_nombre}",
+                "rol": st.session_state.nuevo_rol,
+                "color": colores_roles.get(st.session_state.nuevo_rol, "#9c27b0")
+            }
         
         st.session_state.habitaciones[st.session_state.habitacion_nuevo][
             "pacientes" if st.session_state.tipo_nuevo == "paciente" else "enfermeras"
@@ -266,7 +281,7 @@ def agregar_persona():
         # Resetear valores
         st.session_state.nuevo_nombre = ""
         st.session_state.nuevo_diagnostico = "Diagnóstico por definir"
-        st.session_state.nuevo_rol = "General"
+        st.session_state.nuevo_rol = "General A"
         st.rerun()
     else:
         st.warning("Por favor ingrese un nombre válido")
@@ -314,43 +329,22 @@ def registrar_atencion(tipo):
         })
         st.rerun()
 
-def show_estado_legend():
-    """Muestra la leyenda de estados y roles en la parte superior"""
-    st.markdown("""
-    <div class="leyenda-horizontal">
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #ff5252;"></div>
-            <span>Crítico</span>
-        </div>
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #ff9800;"></div>
-            <span>Observación</span>
-        </div>
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #2196f3;"></div>
-            <span>Mejorando</span>
-        </div>
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #4caf50;"></div>
-            <span>Estable</span>
-        </div>
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #9c27b0;"></div>
-            <span>Cardiología</span>
-        </div>
-        <div class="leyenda-item">
-            <div class="estado-badge" style="background-color: #2196f3;"></div>
-            <span>UCI</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+def main():
+    """Función principal que ejecuta la aplicación"""
+    setup_page_config()
+    load_custom_styles()
+    initialize_session_state()
+    show_logo()
+    show_main_content()
+    show_forms()
+    show_summary()
 
 def show_main_content():
     """Muestra el contenido principal de la aplicación"""
-    
-    # Mostrar leyenda de estados y roles
+
+    # Mostrar leyenda de estados
     show_estado_legend()
-    
+
     # Mostrar selección actual si hay alguna
     if st.session_state.seleccion["nombre"]:
         col1, col2, col3 = st.columns([3, 1, 1])
@@ -371,22 +365,22 @@ def show_main_content():
                         <div><b>Habitación:</b> {st.session_state.seleccion["habitacion"]}</div>
                     </div>
                 """, unsafe_allow_html=True)
-        
+
         with col2:
             if st.session_state.seleccion["tipo"] == "paciente":
-                if st.button("💊 Administrar medicación", 
-                           key=f"med_{st.session_state.seleccion['id']}", 
+                if st.button("💊 Administrar medicación",
+                           key=f"med_{st.session_state.seleccion['id']}",
                            use_container_width=True,
                            help="Registrar medicación administrada"):
                     registrar_atencion("Medicación administrada")
-        
+
         with col3:
-            if st.button("❌ Cancelar selección", 
-                        key=f"cancel_{st.session_state.seleccion['id']}", 
+            if st.button("❌ Cancelar selección",
+                        key=f"cancel_{st.session_state.seleccion['id']}",
                         use_container_width=True):
                 st.session_state.seleccion = {"id": None, "tipo": None, "nombre": None, "habitacion": None, "diagnostico": None, "rol": None}
                 st.rerun()
-    
+
     st.markdown("""
         <div style="background-color: #f0f8ff; padding: 12px; border-radius: 8px; margin-bottom: 20px; font-size: 0.9em;">
             <b>Instrucciones:</b><br>
@@ -402,14 +396,14 @@ def show_main_content():
     for i, (habitacion, datos) in enumerate(st.session_state.habitaciones.items()):
         with cols[i % 3]:
             st.markdown(f"### {habitacion}")
-            
+
             # Mostrar número de pacientes y enfermeras
             st.caption(f"{len(datos['pacientes'])} paciente(s) • {len(datos['enfermeras'])} enfermera(s)")
-            
+
             # Mostrar pacientes
             for p in datos["pacientes"]:
                 selected = (st.session_state.seleccion["id"] == p["id"])
-                
+
                 container = st.container()
                 with container:
                     st.markdown(f"""
@@ -417,13 +411,13 @@ def show_main_content():
                             <div class="persona-name">{p["nombre"]}</div>
                             <div class="persona-info">{p["diagnostico"]}</div>
                             <div class="badge-container">
-                                <div class="estado-badge" style="background-color: {p["color"]};"></div>
+                                <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid {p["color"]};"></div>
                             </div>
                         </div>
                     """, unsafe_allow_html=True)
-                
-                if container.button("", 
-                                 key=f"btn_p_{p['id']}", 
+
+                if container.button("",
+                                 key=f"btn_p_{p['id']}",
                                  help=f"Seleccionar {p['nombre']}"):
                     if selected:
                         st.session_state.seleccion = {"id": None, "tipo": None, "nombre": None, "habitacion": None, "diagnostico": None, "rol": None}
@@ -437,14 +431,14 @@ def show_main_content():
                             "rol": None
                         }
                     st.rerun()
-            
+
             # Mostrar enfermeras
             if datos["enfermeras"]:
                 st.markdown('<div class="seccion-enfermeras"><div class="seccion-enfermeras-title">Enfermeras asignadas</div></div>', unsafe_allow_html=True)
-                
+
                 for e in datos["enfermeras"]:
                     selected = (st.session_state.seleccion["id"] == e["id"])
-                    
+
                     container = st.container()
                     with container:
                         st.markdown(f"""
@@ -452,13 +446,13 @@ def show_main_content():
                                 <div class="persona-name">{e["nombre"]}</div>
                                 <div class="persona-info">{e["rol"]}</div>
                                 <div class="badge-container">
-                                    <div class="estado-badge" style="background-color: {e["color"]};"></div>
+                                    <div style="width: 14px; height: 14px; background-color: {e["color"]}; border-radius: 3px;"></div>
                                 </div>
                             </div>
                         """, unsafe_allow_html=True)
-                    
-                    if container.button("", 
-                                     key=f"btn_e_{e['id']}", 
+
+                    if container.button("",
+                                     key=f"btn_e_{e['id']}",
                                      help=f"Seleccionar {e['nombre']}"):
                         if selected:
                             st.session_state.seleccion = {"id": None, "tipo": None, "nombre": None, "habitacion": None, "diagnostico": None, "rol": None}
@@ -472,19 +466,64 @@ def show_main_content():
                                 "rol": e["rol"]
                             }
                         st.rerun()
-            
+
             # Botón para mover a la habitación actual
-            if (st.session_state.seleccion["nombre"] and 
-                st.session_state.seleccion["habitacion"] and 
+            if (st.session_state.seleccion["nombre"] and
+                st.session_state.seleccion["habitacion"] and
                 habitacion != st.session_state.seleccion["habitacion"]):
-                
+
                 tipo_seleccionado = "paciente" if st.session_state.seleccion["tipo"] == "paciente" else "enfermera"
                 nombre_corto = st.session_state.seleccion["nombre"].split(": ")[1].split()[0]
-                
-                if st.button(f"⇨ Mover {tipo_seleccionado} {nombre_corto} aquí", 
-                           key=f"mover_{habitacion}_{st.session_state.seleccion['id']}", 
+
+                if st.button(f"⇨ Mover {tipo_seleccionado} {nombre_corto} aquí",
+                           key=f"mover_{habitacion}_{st.session_state.seleccion['id']}",
                            use_container_width=True):
                     mover_persona(habitacion)
+
+def show_estado_legend():
+    """Muestra la leyenda de estados y roles en la parte superior"""
+    st.markdown("""
+    <div class="leyenda-horizontal">
+        <div class="leyenda-item">
+            <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #ff0000;"></div>
+            <span>Crítico</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #ff6600;"></div>
+            <span>Observación</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #0066ff;"></div>
+            <span>Mejorando</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 14px solid #00aa00;"></div>
+            <span>Estable</span>
+        </div>
+    </div>
+    <div class="leyenda-horizontal" style="margin-top: 10px;">
+        <div class="leyenda-item">
+            <div style="width: 14px; height: 14px; background-color: #9c27b0; border-radius: 3px;"></div>
+            <span>Especialista</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 14px; height: 14px; background-color: #2196f3; border-radius: 3px;"></div>
+            <span>General A</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 14px; height: 14px; background-color: #ff9800; border-radius: 3px;"></div>
+            <span>General B</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 14px; height: 14px; background-color: #4caf50; border-radius: 3px;"></div>
+            <span>General C</span>
+        </div>
+        <div class="leyenda-item">
+            <div style="width: 14px; height: 14px; background-color: #607d8b; border-radius: 3px;"></div>
+            <span>Camillero</span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 def show_forms():
     """Muestra los formularios para dar de alta nuevos pacientes y enfermeras"""
@@ -535,7 +574,7 @@ def show_forms():
             
             st.session_state.nuevo_rol = st.selectbox(
                 "Rol:",
-                ["Especialista", "General  A", "General B", "General C", "Suplente", "Camillero"],
+                ["Especialista", "General A", "General B", "General C", "Camillero"],
                 key="select_rol_enfermera"
             )
             
@@ -578,16 +617,6 @@ def show_summary():
         st.info("No hay movimientos registrados", icon="ℹ️")
 
     st.markdown("</div>", unsafe_allow_html=True)
-
-def main():
-    """Función principal que ejecuta la aplicación"""
-    setup_page_config()
-    load_custom_styles()
-    initialize_session_state()
-    show_logo()
-    show_main_content()
-    show_forms()
-    show_summary()
 
 if __name__ == "__main__":
     main()
