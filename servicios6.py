@@ -80,7 +80,7 @@ def setup_page_config():
     """Configura la página de Streamlit"""
     st.set_page_config(
         layout="wide",
-        page_title="Gestión de Pacientes y Enfermeras en Urgencias",
+        page_title="Asignación de Pacientes y Enfermeras en el Servicio de Urgencias",
         page_icon="🏥"
     )
 
@@ -238,9 +238,9 @@ def show_logo():
                 unsafe_allow_html=True
             )
         except Exception as e:
-            st.markdown('<div class="header-container"><h2>Gestión de Pacientes y Enfermeras en el Servicio de Urgencias</h2></div>', unsafe_allow_html=True)
+            st.markdown('<div class="header-container"><h2>Asignación de Pacientes y Enfermeras en el Servicio de Urgencias</h2></div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="header-container"><h2>Gestión de Pacientes y Enfermeras en el Servicio de Urgencias</h2></div>', unsafe_allow_html=True)
+        st.markdown('<div class="header-container"><h2>Asignación de Pacientes y Enfermeras en el Servicio de Urgencias</h2></div>', unsafe_allow_html=True)
 
 def agregar_persona():
     """Agrega un nuevo paciente o enfermera según el formulario"""

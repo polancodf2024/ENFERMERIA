@@ -40,7 +40,7 @@ def initialize_session_state():
 
 def setup_page_config():
     """Configura la página de Streamlit"""
-    st.set_page_config(layout="wide", page_title="Gestión de Personal Hospitalario")
+    st.set_page_config(layout="wide", page_title="Supervisión de Enfermería por Turno")
 
 def load_custom_styles():
     """Carga los estilos CSS personalizados"""
@@ -159,9 +159,9 @@ def show_logo():
                 unsafe_allow_html=True
             )
         except Exception as e:
-            st.markdown('<div class="header-container"><h2>Gestión de Personal Hospitalario</h2></div>', unsafe_allow_html=True)
+            st.markdown('<div class="header-container"><h2>Supervisión de Enfermería por Turno</h2></div>', unsafe_allow_html=True)
     else:
-        st.markdown('<div class="header-container"><h2>Gestión de Personal Hospitalario</h2></div>', unsafe_allow_html=True)
+        st.markdown('<div class="header-container"><h2>Supervisión de Enfermería por Turno</h2></div>', unsafe_allow_html=True)
 
 def mover_personal(servicio_destino):
     """Mueve el personal seleccionado al servicio destino"""
@@ -215,7 +215,6 @@ def show_role_legend():
 
 def show_main_content():
     """Muestra el contenido principal de la aplicación"""
-    st.title("Gestión de Personal por Servicio")
     
     # Mostrar leyenda de roles en la parte superior
     show_role_legend()
